@@ -774,8 +774,6 @@ io.on('connection', (socket) => {
     let room = rooms.get(roomId)
     if (!room) {
       const saved = readRoomSession(roomId)
-      // Votes are in-memory only — never restore revealed, or the room
-      // locks with empty cards ("—") and no way to vote again.
       room = {
         code: roomId,
         boardName: typeof boardName === 'string' ? boardName : roomId,
