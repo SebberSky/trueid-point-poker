@@ -1,0 +1,54 @@
+:root {
+  --felt: #4a1d6a;
+  --felt-deep: #1a0b2e;
+  --felt-light: #6b2d91;
+  --cream: #f6eefb;
+  --cream-soft: #fbf5ff;
+  --ink: #1a1024;
+  --gold: #e11d48;
+  --gold-bright: #fb7185;
+  --rose: #a855f7;
+  --line: rgba(246, 238, 251, 0.18);
+  --shadow: 0 24px 60px rgba(0, 0, 0, 0.4);
+  font-family: 'Sora', sans-serif;
+  color: var(--cream);
+  background: var(--felt-deep);
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  min-height: 100%;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  background:
+    radial-gradient(ellipse 80% 50% at 50% -10%, rgba(232, 29, 72, 0.22), transparent 55%),
+    radial-gradient(circle at 15% 80%, rgba(74, 29, 106, 0.9), transparent 42%),
+    radial-gradient(circle at 90% 20%, rgba(168, 85, 247, 0.22), transparent 38%),
+    linear-gradient(160deg, #12061f 0%, var(--felt) 45%, #2a0f45 100%);
+  background-attachment: fixed;
+}
+
+button,
+input {
+  font: inherit;
+}
+
+button {
+  cursor: pointer;
+}
+
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
