@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none">
+  <defs>
+    <linearGradient id="felt" x1="8" y1="4" x2="56" y2="60" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#6B2D91"/>
+      <stop offset="1" stop-color="#1A0B2E"/>
+    </linearGradient>
+    <linearGradient id="card" x1="20" y1="10" x2="46" y2="54" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FBF5FF"/>
+      <stop offset="1" stop-color="#F6EEFB"/>
+    </linearGradient>
+  </defs>
+  <rect width="64" height="64" rx="16" fill="url(#felt)"/>
+  <rect x="11" y="14" width="30" height="40" rx="5" transform="rotate(-14 26 34)" fill="#E9D5FF" opacity="0.55"/>
+  <rect x="18" y="12" width="30" height="40" rx="5" transform="rotate(8 33 32)" fill="url(#card)"/>
+  <rect x="20.5" y="14.5" width="25" height="35" rx="3.5" transform="rotate(8 33 32)" stroke="#E11D48" stroke-opacity="0.4"/>
+  <text
+    x="33"
+    y="38"
+    text-anchor="middle"
+    dominant-baseline="middle"
+    fill="#E11D48"
+    font-family="Bricolage Grotesque, Sora, system-ui, sans-serif"
+    font-size="22"
+    font-weight="700"
+    transform="rotate(8 33 32)"
+  >8</text>
+  <circle cx="46" cy="48" r="5.5" fill="#A855F7"/>
+  <circle cx="46" cy="48" r="2.2" fill="#FBF5FF"/>
+</svg>
