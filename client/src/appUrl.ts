@@ -1,16 +1,23 @@
-/** App URL under Vite `base` (e.g. `/poker/api/...`). */
-export function appUrl(path: string): string {
-  const relative = path.replace(/^\//, '')
-  const url = new URL(relative, `${window.location.origin}${import.meta.env.BASE_URL}`)
-  return `${url.pathname}${url.search}`
+/** Funnel mount prefix from the browser path (`/poker`, or '' on localhost). */
+export function mountPrefix(): string {
+  const path = window.location.pathname
+  if (path === '/poker' || path.startsWith('/poker/')) return '/poker'
+  return ''
 }
 
-/** Pathname without the Vite base prefix (no leading/trailing slashes). */
+/** Browser URL for API/assets under Funnel (`/poker/api/...`) or local (`/api/...`). */
+export function appUrl(path: string): string {
+  const clean = path.replace(/^\//, '')
+  const mount = mountPrefix()
+  return `${mount}/${clean}`.replace(/\/{2,}/g, '/')
+}
+
+/** Pathname without `/poker` mount (no leading/trailing slashes). */
 export function appPathname(): string {
-  const base = String(import.meta.env.BASE_URL || '/').replace(/\/+$/, '')
   let path = window.location.pathname
-  if (base && (path === base || path.startsWith(`${base}/`))) {
-    path = path.slice(base.length)
+  const mount = mountPrefix()
+  if (mount && (path === mount || path.startsWith(`${mount}/`))) {
+    path = path.slice(mount.length)
   }
   return path.replace(/^\/+|\/+$/g, '')
 }
