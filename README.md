@@ -61,13 +61,21 @@ npx pm2 save
 # (ออปชัน) คนนอก: tailscale funnel --bg 5174
 ```
 
-### Jenkins job
+### Jenkins job (เช่น 2.568.x)
 
 1. New Item → **Pipeline**
 2. Pipeline from SCM → Git → `https://github.com/SebberSky/trueid-point-poker`
 3. Branch: `*/main` · Script Path: `Jenkinsfile`
 4. Agent label: `agent3`
-5. (ออปชัน) **Generic Webhook Trigger** หรือ GitHub webhook ตอน push ไป `main`
+5. **Build Now ครั้งแรก** — ให้ `GenericTrigger` ใน `Jenkinsfile` ลงทะเบียน token (UI มักไม่มีช่อง Token)
+6. Webhook URL:
+
+```text
+http://<JENKINS_URL>/generic-webhook-trigger/invoke?token=trueid-point-poker
+```
+
+ทดสอบ: `curl -X POST 'http://<JENKINS_URL>/generic-webhook-trigger/invoke?token=trueid-point-poker'`  
+(ออปชัน) GitHub → Settings → Webhooks → Payload URL = URL ด้านบน
 
 Job: `checkout` → `scripts/jenkins-restart.sh` (pm2 ที่โฟลเดอร์ถาวร) แล้วจบ
 
