@@ -36,14 +36,15 @@ cd client && npm install && npm run dev
 
 รันบนเครื่อง **`agent3s-imac`** คู่กับ TrueID Office — ใช้ **Jenkins webhook / pm2**  
 พอร์ตไม่ชน office: **web `5174` / API `3002`** (office = `5173` / `3001`)  
-Vite `base` = **`/poker/`** เพื่อแยก path บน Funnel hostname เดียวกับ office
+Vite `base` = **`/poker/`** · Office ใช้ **`/office/`** · Funnel **root `/` ไม่ผูกแอป**
 
 ### ให้คนอื่นเข้า
 
 | ใคร | URL |
 |-----|-----|
-| Point Poker (Funnel) | `https://agent3s-imac.taildc5084.ts.net/poker/` |
-| TrueID Office (Funnel) | `https://agent3s-imac.taildc5084.ts.net/` |
+| Point Poker | `https://agent3s-imac.taildc5084.ts.net/poker/` |
+| TrueID Office | `https://agent3s-imac.taildc5084.ts.net/office/` |
+| Root `/` | ไม่พาไปแอปไหน (ต้องใส่ path เอง) |
 | เครื่องโฮสต์เอง | `http://localhost:5174/poker/` |
 
 Webhook จะ: sync `~/apps/trueid-point-poker` → `npm ci` (root/server/client) → `pm2 restart`
@@ -62,18 +63,23 @@ npx pm2 save
 # (ออปชัน) ขึ้นหลังรีบูต: npx pm2 startup
 ```
 
-### Tailscale Serve / Funnel (path แยก)
-
-ครั้งหนึ่งบนโฮสต์ — office ที่ `/`, poker ที่ `/poker`:
+### Tailscale Serve / Funnel (path แยก — ไม่ผูก `/`)
 
 ```bash
-tailscale serve --bg https / http://127.0.0.1:5173
-tailscale serve --bg https /poker http://127.0.0.1:5174
-tailscale funnel --bg 443 on
-tailscale serve status
+cd ~/apps/trueid-point-poker
+bash scripts/configure-funnel-paths.sh
+# หรือมือ:
+#   tailscale serve reset
+#   tailscale serve --bg --yes https /office http://127.0.0.1:5173
+#   tailscale serve --bg --yes https /poker  http://127.0.0.1:5174
+#   tailscale funnel --bg --yes 443 on
+#   tailscale serve status
 ```
 
-จากนั้นเปิด: https://agent3s-imac.taildc5084.ts.net/poker/
+จากนั้นเปิดเฉพาะ:
+
+- https://agent3s-imac.taildc5084.ts.net/poker/
+- https://agent3s-imac.taildc5084.ts.net/office/
 
 ### Jenkins job (2.568.x — มี `githubPush` ไม่มี Generic Webhook Trigger)
 
