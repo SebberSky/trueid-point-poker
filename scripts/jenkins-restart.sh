@@ -100,13 +100,12 @@ npm ci --prefix client
 
 PM2=(npx --no-install pm2)
 
-echo "==> pm2 delete trueid-point-poker trueid-portal then start from $APP_DIR"
-"${PM2[@]}" delete trueid-point-poker trueid-portal 2>/dev/null || true
+echo "==> pm2 delete trueid-point-poker then start from $APP_DIR"
+"${PM2[@]}" delete trueid-point-poker 2>/dev/null || true
 "${PM2[@]}" start "$APP_DIR/ecosystem.config.cjs"
 
 "${PM2[@]}" save
 "${PM2[@]}" status trueid-point-poker
-"${PM2[@]}" status trueid-portal
 
 echo "==> waiting for API health on :3002..."
 ok=0
@@ -124,21 +123,6 @@ if [[ "$ok" -ne 1 ]]; then
   echo "ERROR: /health did not come up on :3002" >&2
   "${PM2[@]}" logs trueid-point-poker --lines 40 --nostream || true
   exit 1
-fi
-
-echo "==> waiting for portal on :5170..."
-portal_ok=0
-for _ in 1 2 3 4 5; do
-  if curl -sf -m 2 http://127.0.0.1:5170/ >/dev/null 2>&1; then
-    echo "==> portal up"
-    portal_ok=1
-    break
-  fi
-  sleep 1
-done
-if [[ "$portal_ok" -ne 1 ]]; then
-  echo "WARN: portal did not respond on :5170" >&2
-  "${PM2[@]}" logs trueid-portal --lines 20 --nostream || true
 fi
 
 echo "==> share URLs"
