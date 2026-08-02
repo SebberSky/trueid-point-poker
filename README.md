@@ -61,26 +61,27 @@ npx pm2 save
 # (ออปชัน) คนนอก: tailscale funnel --bg 5174
 ```
 
-### Jenkins job (เช่น 2.568.x)
+### Jenkins job (2.568.x — มี `githubPush` ไม่มี Generic Webhook Trigger)
 
 1. New Item → **Pipeline**
 2. Pipeline from SCM → Git → `https://github.com/SebberSky/trueid-point-poker`
 3. Branch: `*/main` · Script Path: `Jenkinsfile`
 4. Agent label: `agent3`
-5. **Build Now ครั้งแรก** — ให้ `GenericTrigger` ใน `Jenkinsfile` ลงทะเบียน token (UI มักไม่มีช่อง Token)
-6. Webhook URL:
+5. **Build Now ครั้งแรก** ให้ `githubPush()` จาก Jenkinsfile ติดใน job
+6. GitHub → [repo Settings → Webhooks](https://github.com/SebberSky/trueid-point-poker/settings/hooks) → Add webhook:
 
-```text
-http://<JENKINS_URL>/generic-webhook-trigger/invoke?token=trueid-point-poker
-```
+| ช่อง | ค่า |
+|------|-----|
+| Payload URL | `http://<JENKINS_URL>/github-webhook/` |
+| Content type | `application/json` |
+| Events | Just the **push** event |
 
-ทดสอบ: `curl -X POST 'http://<JENKINS_URL>/generic-webhook-trigger/invoke?token=trueid-point-poker'`  
-(ออปชัน) GitHub → Settings → Webhooks → Payload URL = URL ด้านบน
+`<JENKINS_URL>` = URL ที่เปิด Jenkins ได้จากเน็ต/Tailscale (เช่น `http://agent3s-imac:8080`)
 
-Job: `checkout` → `scripts/jenkins-restart.sh` (pm2 ที่โฟลเดอร์ถาวร) แล้วจบ
-
-รีสตาร์ทมือบนโฮสต์:
+รีสตาร์ทมือ: กด **Build Now** ใน job หรือบนโฮสต์:
 
 ```bash
 cd ~/apps/trueid-point-poker && npm run restart:host
 ```
+
+Job: `checkout` → `scripts/jenkins-restart.sh` (pm2 ที่โฟลเดอร์ถาวร) แล้วจบ
