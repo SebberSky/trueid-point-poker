@@ -3,6 +3,47 @@
 # Host app lives under ~/apps/ (default ~/apps/trueid-point-poker). Override with TRUEID_POINT_POKER_DIR.
 set -euo pipefail
 
+# Jenkins agents often lack interactive-shell PATH (Homebrew / nvm / fnm).
+ensure_node_on_path() {
+  export PATH="/opt/homebrew/bin:/usr/local/bin:${HOME}/.local/bin:${PATH}"
+
+  if [[ -s "${HOME}/.nvm/nvm.sh" ]]; then
+    # shellcheck disable=SC1091
+    . "${HOME}/.nvm/nvm.sh"
+  fi
+  if [[ -d "${HOME}/.fnm" ]]; then
+    export PATH="${HOME}/.fnm:${PATH}"
+    if command -v fnm >/dev/null 2>&1; then
+      eval "$(fnm env)"
+    fi
+  fi
+  # Volta
+  if [[ -d "${HOME}/.volta/bin" ]]; then
+    export PATH="${HOME}/.volta/bin:${PATH}"
+  fi
+  # Latest nvm node bin if nvm.sh did not load (non-interactive)
+  if ! command -v npm >/dev/null 2>&1 && [[ -d "${HOME}/.nvm/versions/node" ]]; then
+    local latest
+    latest="$(ls -1d "${HOME}/.nvm/versions/node"/v* 2>/dev/null | sort -V | tail -1 || true)"
+    if [[ -n "${latest}" && -x "${latest}/bin/npm" ]]; then
+      export PATH="${latest}/bin:${PATH}"
+    fi
+  fi
+
+  if ! command -v npm >/dev/null 2>&1; then
+    echo "ERROR: npm not found in PATH for this Jenkins shell." >&2
+    echo "PATH=${PATH}" >&2
+    echo "Install Node (brew/nvm) for user $(whoami), or set PATH on the Jenkins node." >&2
+    command -v node >/dev/null 2>&1 && echo "node=$(command -v node)" >&2 || echo "node: missing" >&2
+    exit 127
+  fi
+  echo "==> using node=$(command -v node) npm=$(command -v npm)"
+  node -v
+  npm -v
+}
+
+ensure_node_on_path
+
 SCRIPT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
 resolve_deploy_dir() {

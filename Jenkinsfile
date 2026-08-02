@@ -36,8 +36,11 @@ pipeline {
 
     stage('Restart point-poker (pm2)') {
       steps {
-        sh 'chmod +x scripts/jenkins-restart.sh'
-        sh 'bash scripts/jenkins-restart.sh'
+        sh '''
+          export PATH="/opt/homebrew/bin:/usr/local/bin:$HOME/.local/bin:$PATH"
+          chmod +x scripts/jenkins-restart.sh
+          bash scripts/jenkins-restart.sh
+        '''
       }
     }
   }
