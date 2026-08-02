@@ -199,12 +199,12 @@ function adminHeaders(extra?: HeadersInit): HeadersInit {
   }
 }
 
-export async function adminLogin(email: string, password: string) {
+export async function adminLogin(username: string, password: string) {
   const res = await fetch(appUrl(`/api/${ADMIN_PATH}/login`), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      email: email.trim().toLowerCase(),
+      username: username.trim(),
       password,
     }),
   })
@@ -213,7 +213,7 @@ export async function adminLogin(email: string, password: string) {
   const token = String(data?.token || '')
   if (!token) throw new Error('Login failed')
   setAdminToken(token)
-  return { email: String(data.email || email) }
+  return { username: String(data.username || username) }
 }
 
 export async function adminLogout() {
@@ -241,7 +241,7 @@ export async function adminMe() {
   }
   const data = await res.json()
   if (!res.ok) throw new Error(data?.error || 'Session check failed')
-  return data as { ok: boolean; email: string }
+  return data as { ok: boolean; username: string }
 }
 
 export async function adminListRooms() {

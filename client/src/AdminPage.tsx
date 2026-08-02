@@ -29,7 +29,7 @@ function roomMatches(room: AdminRoom, query: string) {
 export function AdminPage() {
   const [authed, setAuthed] = useState(false)
   const [authChecking, setAuthChecking] = useState(Boolean(getAdminToken()))
-  const [loginEmail, setLoginEmail] = useState('')
+  const [loginUsername, setLoginUsername] = useState('')
   const [loginPassword, setLoginPassword] = useState('')
   const [loginBusy, setLoginBusy] = useState(false)
   const [loginError, setLoginError] = useState<string | null>(null)
@@ -208,7 +208,7 @@ export function AdminPage() {
     setLoginBusy(true)
     setLoginError(null)
     try {
-      await adminLogin(loginEmail, loginPassword)
+      await adminLogin(loginUsername, loginPassword)
       setLoginPassword('')
       setAuthed(true)
     } catch (err) {
@@ -295,11 +295,11 @@ export function AdminPage() {
           <h1>Admin</h1>
           <form className="entry-form" onSubmit={handleLogin}>
             <label className="field">
-              <span>Email</span>
+              <span>Username</span>
               <input
-                type="email"
-                value={loginEmail}
-                onChange={(e) => setLoginEmail(e.target.value)}
+                type="text"
+                value={loginUsername}
+                onChange={(e) => setLoginUsername(e.target.value)}
                 autoComplete="username"
                 required
               />
