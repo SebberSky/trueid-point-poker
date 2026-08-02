@@ -112,7 +112,7 @@ export function Room({ room, playerId, hostEmail, onRoomUpdate, onLeave }: RoomP
     let cancelled = false
     setPlanningBusy(true)
     setPlanningError(null)
-    fetchPlanningTickets(room.boardId)
+    fetchPlanningTickets(room.boardId, room.code)
       .then((data) => {
         if (cancelled) return
         setPlanning(data)
@@ -136,7 +136,7 @@ export function Room({ room, playerId, hostEmail, onRoomUpdate, onLeave }: RoomP
     return () => {
       cancelled = true
     }
-  }, [isHost, room.boardId])
+  }, [isHost, room.boardId, room.code])
 
   useEffect(() => {
     if (!isHost) return
@@ -151,7 +151,7 @@ export function Room({ room, playerId, hostEmail, onRoomUpdate, onLeave }: RoomP
     setSearchBusy(true)
     setSearchError(null)
     const timer = window.setTimeout(() => {
-      searchIssues(q)
+      searchIssues(q, room.code)
         .then((data) => {
           if (!cancelled) setSearchResults(data.issues)
         })
@@ -169,7 +169,7 @@ export function Room({ room, playerId, hostEmail, onRoomUpdate, onLeave }: RoomP
       cancelled = true
       window.clearTimeout(timer)
     }
-  }, [isHost, ticketQuery])
+  }, [isHost, ticketQuery, room.code])
 
   function handleVote(value: string) {
     if (isHost || room.revealed) return
@@ -321,6 +321,7 @@ export function Room({ room, playerId, hostEmail, onRoomUpdate, onLeave }: RoomP
               <TicketViewer
                 key={selected.key}
                 issueKey={selected.key}
+                roomId={room.code}
                 fallbackSummary={selected.summary}
                 fallbackUrl={selected.url}
               />

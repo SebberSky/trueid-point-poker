@@ -19,7 +19,9 @@ No UI link. Open:
 
 Default: [`/poker/room-hosts-ctrl`](http://localhost:5174/poker/room-hosts-ctrl)
 
-Set host emails per room there. Configure `ADMIN_PATH` in `server/.env`.
+Set host emails + API tokens per room there. Configure `ADMIN_PATH` in `server/.env`.
+
+Until a room has a host token, Jira reads/writes use `JIRA_EMAIL` / `JIRA_API_TOKEN` from `server/.env`. After a host is saved, that room uses the host’s own token.
 
 ## Quick start
 

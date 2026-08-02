@@ -25,6 +25,15 @@ function jiraConfig() {
   return { base, email, token }
 }
 
+/**
+ * Server-wide default Jira credentials (used until a room host token is set).
+ * @returns {{ email: string, token: string }}
+ */
+export function defaultJiraAuth() {
+  const { email, token } = jiraConfig()
+  return { email, token }
+}
+
 function authHeader() {
   const { email, token } = jiraConfig()
   return `Basic ${Buffer.from(`${email}:${token}`).toString('base64')}`
@@ -74,19 +83,26 @@ async function jiraFetch(path, init = {}) {
  * Stream binary attachment content/thumbnail from Jira.
  * @param {string} attachmentId
  * @param {'content' | 'thumbnail'} [kind]
+ * @param {{ email: string, token: string } | null} [auth]
  */
-export async function fetchAttachmentBinary(attachmentId, kind = 'content') {
+export async function fetchAttachmentBinary(
+  attachmentId,
+  kind = 'content',
+  auth = null,
+) {
   const id = String(attachmentId || '').trim()
   if (!/^\d+$/.test(id)) {
     return { error: 'Invalid attachment id', status: 400 }
   }
   const pathKind = kind === 'thumbnail' ? 'thumbnail' : 'content'
   const { base } = jiraConfig()
+  const authorization =
+    auth?.email && auth?.token ? authHeaderFrom(auth) : authHeader()
   const res = await fetch(
     `${base}/rest/api/3/attachment/${pathKind}/${encodeURIComponent(id)}`,
     {
       headers: {
-        Authorization: authHeader(),
+        Authorization: authorization,
         Accept: '*/*',
       },
       redirect: 'follow',
@@ -102,17 +118,31 @@ export async function fetchAttachmentBinary(attachmentId, kind = 'content') {
   }
 }
 
-function rewriteAttachmentUrls(html, base) {
+/**
+ * @param {string} id
+ * @param {'content' | 'thumbnail'} kind
+ * @param {string} [roomId]
+ */
+function attachmentProxyUrl(id, kind, roomId = '') {
+  const path = `/api/attachments/${id}/${kind}`
+  const room = String(roomId || '').trim()
+  return room ? `${path}?roomId=${encodeURIComponent(room)}` : path
+}
+
+function rewriteAttachmentUrls(html, base, roomId = '') {
   if (!html || typeof html !== 'string') return null
   const escaped = base.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const qs = String(roomId || '').trim()
+    ? `?roomId=${encodeURIComponent(String(roomId).trim())}`
+    : ''
   let out = html
     .replace(
       new RegExp(`${escaped}/rest/api/[23]/attachment/content/(\\d+)`, 'gi'),
-      '/api/attachments/$1/content',
+      `/api/attachments/$1/content${qs}`,
     )
     .replace(
       new RegExp(`${escaped}/rest/api/[23]/attachment/thumbnail/(\\d+)`, 'gi'),
-      '/api/attachments/$1/thumbnail',
+      `/api/attachments/$1/thumbnail${qs}`,
     )
     .replace(/<script[\s\S]*?>[\s\S]*?<\/script>/gi, '')
     // Jira media/connect stubs that only work inside Jira UI
@@ -367,13 +397,16 @@ function isClosedIssue(issue) {
 /**
  * @param {number|string} boardId
  * @param {number|string} sprintId
+ * @param {{ email: string, token: string } | null} [auth]
  */
-async function fetchSprintIssues(boardId, sprintId) {
+async function fetchSprintIssues(boardId, sprintId, auth = null) {
+  const authOpt = auth ? { auth } : {}
   const issues = []
   let startAt = 0
   for (;;) {
     const data = await jiraFetch(
       `/rest/agile/1.0/board/${boardId}/sprint/${sprintId}/issue?startAt=${startAt}&maxResults=50&fields=${ISSUE_FIELDS}`,
+      authOpt,
     )
     for (const issue of data.issues || []) {
       if (isClosedIssue(issue)) continue
@@ -389,14 +422,17 @@ async function fetchSprintIssues(boardId, sprintId) {
 /**
  * @param {number|string} boardId
  * @param {string} [jql]
+ * @param {{ email: string, token: string } | null} [auth]
  */
-async function fetchBacklogIssues(boardId, jql) {
+async function fetchBacklogIssues(boardId, jql, auth = null) {
+  const authOpt = auth ? { auth } : {}
   const issues = []
   let startAt = 0
   const query = jql ? `&jql=${encodeURIComponent(jql)}` : ''
   for (;;) {
     const data = await jiraFetch(
       `/rest/agile/1.0/board/${boardId}/backlog?startAt=${startAt}&maxResults=50&fields=${ISSUE_FIELDS}${query}`,
+      authOpt,
     )
     for (const issue of data.issues || []) {
       issues.push(mapIssue(issue))
@@ -409,37 +445,53 @@ async function fetchBacklogIssues(boardId, jql) {
   return issues
 }
 
-async function fetchRecentBacklogIssues(boardId) {
+/**
+ * @param {number|string} boardId
+ * @param {{ email: string, token: string } | null} [auth]
+ */
+async function fetchRecentBacklogIssues(boardId, auth = null) {
   try {
     return await fetchBacklogIssues(
       boardId,
       `updated >= -${BACKLOG_UPDATED_WITHIN_DAYS}d`,
+      auth,
     )
   } catch {
-    return fetchBacklogIssues(boardId)
+    return fetchBacklogIssues(boardId, undefined, auth)
   }
 }
 
 /**
  * Active + recent closed sprint + planned future sprints + capped backlog.
  * @param {number|string} boardId
+ * @param {{ email: string, token: string } | null} [auth]
  */
-export async function getBoardPlanningTickets(boardId) {
+export async function getBoardPlanningTickets(boardId, auth = null) {
   const id = Number(boardId)
   if (!Number.isFinite(id)) {
     return { error: 'Invalid board id', status: 400 }
   }
 
+  const authOpt = auth ? { auth } : {}
   const [active, closed, future] = await Promise.all([
-    jiraFetch(`/rest/agile/1.0/board/${id}/sprint?state=active&maxResults=10`),
-    jiraFetch(`/rest/agile/1.0/board/${id}/sprint?state=closed&maxResults=50`),
-    jiraFetch(`/rest/agile/1.0/board/${id}/sprint?state=future&maxResults=50`),
+    jiraFetch(
+      `/rest/agile/1.0/board/${id}/sprint?state=active&maxResults=10`,
+      authOpt,
+    ),
+    jiraFetch(
+      `/rest/agile/1.0/board/${id}/sprint?state=closed&maxResults=50`,
+      authOpt,
+    ),
+    jiraFetch(
+      `/rest/agile/1.0/board/${id}/sprint?state=future&maxResults=50`,
+      authOpt,
+    ),
   ])
 
   /** @type {{ id: number, name: string, state?: string, issues: ReturnType<typeof mapIssue>[] }[]} */
   const activeSprints = []
   for (const sprint of active.values || []) {
-    const issues = await fetchSprintIssues(id, sprint.id)
+    const issues = await fetchSprintIssues(id, sprint.id, auth)
     if (issues.length === 0) continue
     activeSprints.push({
       id: sprint.id,
@@ -464,7 +516,7 @@ export async function getBoardPlanningTickets(boardId) {
   /** @type {{ id: number, name: string, issues: ReturnType<typeof mapIssue>[] } | null} */
   let previousSprint = null
   if (previous && previousAge <= PREVIOUS_SPRINT_MAX_AGE_MS) {
-    const issues = await fetchSprintIssues(id, previous.id)
+    const issues = await fetchSprintIssues(id, previous.id, auth)
     if (issues.length > 0) {
       previousSprint = {
         id: previous.id,
@@ -476,7 +528,7 @@ export async function getBoardPlanningTickets(boardId) {
 
   const backlogGroups = []
   for (const sprint of future.values || []) {
-    const issues = await fetchSprintIssues(id, sprint.id)
+    const issues = await fetchSprintIssues(id, sprint.id, auth)
     if (issues.length === 0) continue
     backlogGroups.push({
       id: sprint.id,
@@ -490,7 +542,7 @@ export async function getBoardPlanningTickets(boardId) {
     id: 0,
     name: 'Backlog',
     state: 'backlog',
-    issues: await fetchRecentBacklogIssues(id),
+    issues: await fetchRecentBacklogIssues(id, auth),
   })
 
   return { boardId: id, activeSprints, previousSprint, backlogGroups }
@@ -504,12 +556,14 @@ function escapeJqlString(value) {
  * Search issues across all projects (no status/project filters).
  * Matches summary, issue key, and assignee display name.
  * @param {string} query
+ * @param {{ email: string, token: string } | null} [auth]
  */
-export async function searchIssues(query) {
+export async function searchIssues(query, auth = null) {
   const q = String(query || '').trim()
   if (!q) return { issues: [], query: q }
   if (q.length > 100) return { error: 'Query too long', status: 400 }
 
+  const authOpt = auth ? { auth } : {}
   const escaped = escapeJqlString(q)
   const clauses = [`summary ~ "${escaped}"`]
 
@@ -522,6 +576,7 @@ export async function searchIssues(query) {
   try {
     users = await jiraFetch(
       `/rest/api/3/user/search?query=${encodeURIComponent(q)}&maxResults=15`,
+      authOpt,
     )
   } catch {
     users = []
@@ -549,6 +604,7 @@ export async function searchIssues(query) {
       maxResults: 40,
       fields: ['summary', 'status', 'issuetype', 'assignee'],
     }),
+    ...authOpt,
   })
 
   const byKey = new Map()
@@ -560,6 +616,7 @@ export async function searchIssues(query) {
   try {
     const picker = await jiraFetch(
       `/rest/api/3/issue/picker?query=${encodeURIComponent(q)}&showSubTasks=true&currentJQL=`,
+      authOpt,
     )
     const picks = []
     for (const section of picker.sections || []) {
@@ -578,6 +635,7 @@ export async function searchIssues(query) {
           maxResults: missing.length,
           fields: ['summary', 'status', 'issuetype', 'assignee'],
         }),
+        ...authOpt,
       })
       for (const issue of extra.issues || []) {
         byKey.set(issue.key, mapIssue(issue))
@@ -592,8 +650,10 @@ export async function searchIssues(query) {
 
 /**
  * @param {string} issueKey
+ * @param {{ email: string, token: string } | null} [auth]
+ * @param {string} [roomId]
  */
-export async function getIssueDetails(issueKey) {
+export async function getIssueDetails(issueKey, auth = null, roomId = '') {
   const key = String(issueKey || '')
     .trim()
     .toUpperCase()
@@ -601,6 +661,7 @@ export async function getIssueDetails(issueKey) {
     return { error: 'Invalid issue key', status: 400 }
   }
 
+  const authOpt = auth ? { auth } : {}
   const { base } = jiraConfig()
   const fields = [
     'summary',
@@ -621,9 +682,11 @@ export async function getIssueDetails(issueKey) {
 
   const issue = await jiraFetch(
     `/rest/api/3/issue/${encodeURIComponent(key)}?fields=${fields}&expand=renderedFields`,
+    authOpt,
   )
   const f = issue.fields || {}
   const rendered = issue.renderedFields || {}
+  const room = String(roomId || '').trim()
 
   const attachments = (f.attachment || []).map((a) => {
     const mimeType = a.mimeType || 'application/octet-stream'
@@ -638,10 +701,10 @@ export async function getIssueDetails(issueKey) {
       isImage: kind === 'image',
       isVideo: kind === 'video',
       isAudio: kind === 'audio',
-      contentUrl: `/api/attachments/${a.id}/content`,
+      contentUrl: attachmentProxyUrl(a.id, 'content', room),
       thumbnailUrl: a.thumbnail
-        ? `/api/attachments/${a.id}/thumbnail`
-        : `/api/attachments/${a.id}/content`,
+        ? attachmentProxyUrl(a.id, 'thumbnail', room)
+        : attachmentProxyUrl(a.id, 'content', room),
     }
   })
 
@@ -662,7 +725,7 @@ export async function getIssueDetails(issueKey) {
     url: `${base}/browse/${issue.key}`,
     summary: f.summary || '',
     description: f.description || null,
-    descriptionHtml: rewriteAttachmentUrls(rendered.description, base),
+    descriptionHtml: rewriteAttachmentUrls(rendered.description, base, room),
     status: f.status?.name || '',
     statusCategory: f.status?.statusCategory?.key || '',
     issuetype: f.issuetype?.name || '',
@@ -699,7 +762,7 @@ export async function getIssueDetails(issueKey) {
         created: c.created,
         author: c.author?.displayName || 'Unknown',
         body: c.body || null,
-        bodyHtml: rewriteAttachmentUrls(renderedMatch?.body, base),
+        bodyHtml: rewriteAttachmentUrls(renderedMatch?.body, base, room),
       }
     }),
   }

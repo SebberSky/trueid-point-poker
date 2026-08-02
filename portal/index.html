@@ -11,6 +11,9 @@
       href="https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700&family=Outfit:wght@300;400;500&display=swap"
       rel="stylesheet"
     />
+    <link rel="preload" href="./assets/tatang-still.png" as="image" />
+    <link rel="preload" href="./assets/tatang-logo.json" as="fetch" crossorigin />
+    <link rel="preload" href="./assets/lottie.min.js" as="script" />
     <style>
       :root {
         --void: #07010f;
@@ -95,9 +98,32 @@
         pointer-events: none;
       }
 
+      .brand__still,
       .brand__lottie {
+        position: absolute;
+        inset: 0;
         width: 100%;
         height: 100%;
+      }
+
+      .brand__still {
+        display: block;
+        object-fit: contain;
+        opacity: 1;
+        transition: opacity 0.2s ease;
+      }
+
+      .brand.is-ready .brand__still {
+        opacity: 0;
+        pointer-events: none;
+      }
+
+      .brand__lottie {
+        opacity: 0;
+      }
+
+      .brand.is-ready .brand__lottie {
+        opacity: 1;
       }
 
       .brand__lottie canvas {
@@ -302,8 +328,17 @@
       <div class="stars-2" aria-hidden="true"></div>
       <div class="haze" aria-hidden="true"></div>
 
-      <header class="brand" aria-label="TrueID">
-        <div class="brand__lottie" id="tatang-logo"></div>
+      <header class="brand" id="brand" aria-label="TrueID">
+        <img
+          class="brand__still"
+          src="./assets/tatang-still.png"
+          width="280"
+          height="280"
+          alt="TrueID"
+          decoding="async"
+          fetchpriority="high"
+        />
+        <div class="brand__lottie" id="tatang-logo" aria-hidden="true"></div>
       </header>
 
       <div class="field">
@@ -325,43 +360,54 @@
       </div>
     </main>
 
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/lottie-web/5.12.2/lottie.min.js"></script>
-    <script>
+    <script src="./assets/lottie.min.js" defer></script>
+    <script defer>
       ;(function () {
         var reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+        var brand = document.getElementById('brand')
         var el = document.getElementById('tatang-logo')
         if (!el || !window.lottie) return
 
         var LOOP_DELAY_MS = 3000
         var restartTimer = null
 
-        var anim = window.lottie.loadAnimation({
-          container: el,
-          renderer: 'canvas',
-          loop: false,
-          autoplay: false,
-          path: './assets/tatang-logo.json',
-          rendererSettings: {
-            clearCanvas: true,
-            preserveAspectRatio: 'xMidYMid meet',
-            progressiveLoad: true,
-            dpr: Math.min(window.devicePixelRatio || 1, 1.25),
-          },
-        })
+        function start(data) {
+          var anim = window.lottie.loadAnimation({
+            container: el,
+            renderer: 'canvas',
+            loop: false,
+            autoplay: false,
+            animationData: data,
+            rendererSettings: {
+              clearCanvas: true,
+              preserveAspectRatio: 'xMidYMid meet',
+              dpr: Math.min(window.devicePixelRatio || 1, 1.25),
+            },
+          })
 
-        anim.setSubframe(false)
+          anim.setSubframe(false)
 
-        anim.addEventListener('DOMLoaded', function () {
-          if (!reduced) anim.play()
-        })
+          anim.addEventListener('DOMLoaded', function () {
+            if (brand) brand.classList.add('is-ready')
+            if (!reduced) anim.play()
+          })
 
-        anim.addEventListener('complete', function () {
-          if (reduced) return
-          clearTimeout(restartTimer)
-          restartTimer = setTimeout(function () {
-            anim.goToAndPlay(0, true)
-          }, LOOP_DELAY_MS)
-        })
+          anim.addEventListener('complete', function () {
+            if (reduced) return
+            clearTimeout(restartTimer)
+            restartTimer = setTimeout(function () {
+              anim.goToAndPlay(0, true)
+            }, LOOP_DELAY_MS)
+          })
+        }
+
+        fetch('./assets/tatang-logo.json')
+          .then(function (r) {
+            if (!r.ok) throw new Error('lottie fetch failed')
+            return r.json()
+          })
+          .then(start)
+          .catch(function () {})
       })()
     </script>
   </body>
