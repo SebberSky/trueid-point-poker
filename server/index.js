@@ -28,7 +28,9 @@ const clientDist = join(__dirname, '../client/dist')
 loadEnvFile(join(__dirname, '.env'), { override: true })
 
 const ADMIN_PATH = (process.env.ADMIN_PATH || 'room-hosts-ctrl').replace(/^\/+/, '')
-const ADMIN_LOGIN_EMAIL = String(process.env.ADMIN_LOGIN_EMAIL || '')
+const ADMIN_LOGIN_USERNAME = String(
+  process.env.ADMIN_LOGIN_USERNAME || process.env.ADMIN_LOGIN_EMAIL || '',
+)
   .trim()
   .toLowerCase()
 const ADMIN_LOGIN_PASSWORD = String(process.env.ADMIN_LOGIN_PASSWORD || '')
@@ -102,25 +104,25 @@ function requireAdmin(req, res, next) {
 }
 
 app.post(`/api/${ADMIN_PATH}/login`, (req, res) => {
-  if (!ADMIN_LOGIN_EMAIL || !ADMIN_LOGIN_PASSWORD) {
+  if (!ADMIN_LOGIN_USERNAME || !ADMIN_LOGIN_PASSWORD) {
     res.status(503).json({ error: 'Admin login is not configured' })
     return
   }
-  const email = String(req.body?.email || '')
+  const username = String(req.body?.username || req.body?.email || '')
     .trim()
     .toLowerCase()
   const password = String(req.body?.password || '')
-  if (email !== ADMIN_LOGIN_EMAIL || password !== ADMIN_LOGIN_PASSWORD) {
-    res.status(401).json({ error: 'Invalid email or password' })
+  if (username !== ADMIN_LOGIN_USERNAME || password !== ADMIN_LOGIN_PASSWORD) {
+    res.status(401).json({ error: 'Invalid username or password' })
     return
   }
   const token = randomBytes(32).toString('hex')
   adminSessions.set(token, Date.now() + ADMIN_SESSION_MS)
-  res.json({ token, email })
+  res.json({ token, username })
 })
 
 app.get(`/api/${ADMIN_PATH}/me`, requireAdmin, (_req, res) => {
-  res.json({ ok: true, email: ADMIN_LOGIN_EMAIL })
+  res.json({ ok: true, username: ADMIN_LOGIN_USERNAME })
 })
 
 app.post(`/api/${ADMIN_PATH}/logout`, requireAdmin, (req, res) => {
