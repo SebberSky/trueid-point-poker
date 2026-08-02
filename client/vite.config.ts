@@ -1,22 +1,13 @@
-import { defineConfig, type Plugin } from 'vite'
+import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 
-/** Avoid 302 /poker → /poker/ which can loop through Funnel path mounts. */
-function pokerBaseRewrite(): Plugin {
-  return {
-    name: 'poker-base-rewrite',
-    configureServer(server) {
-      server.middlewares.use((req, _res, next) => {
-        if (req.url === '/poker') req.url = '/poker/'
-        next()
-      })
-    },
-  }
-}
-
+/**
+ * Funnel `--set-path=/poker` forwards `/poker/...` as `/...` to Vite.
+ * Absolute base `/poker/` then 302s `/` → `/poker/` forever — use relative base.
+ */
 export default defineConfig({
-  base: '/poker/',
-  plugins: [react(), pokerBaseRewrite()],
+  base: './',
+  plugins: [react()],
   server: {
     host: true,
     port: 5174,
@@ -29,6 +20,7 @@ export default defineConfig({
         target: 'http://127.0.0.1:3002',
         ws: true,
       },
+      // Local visits to /poker/... without Funnel strip
       '/poker/api': {
         target: 'http://127.0.0.1:3002',
         rewrite: (p) => p.replace(/^\/poker/, ''),
