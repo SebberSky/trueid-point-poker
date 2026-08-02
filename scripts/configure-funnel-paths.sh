@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Configure Tailscale Serve/Funnel path split on agent3.
 # Root (/) is intentionally unmapped — only /poker and /office.
+# CLI shape: tailscale serve --bg --set-path /path http://127.0.0.1:port
 set -euo pipefail
 
 OFFICE_UPSTREAM="${OFFICE_UPSTREAM:-http://127.0.0.1:5173}"
@@ -15,13 +16,16 @@ echo "==> reset existing serve/funnel handlers"
 tailscale serve reset || true
 
 echo "==> map /office → ${OFFICE_UPSTREAM}"
-tailscale serve --bg --yes https /office "${OFFICE_UPSTREAM}"
+tailscale serve --bg --set-path /office "${OFFICE_UPSTREAM}"
 
 echo "==> map /poker → ${POKER_UPSTREAM}"
-tailscale serve --bg --yes https /poker "${POKER_UPSTREAM}"
+tailscale serve --bg --set-path /poker "${POKER_UPSTREAM}"
 
-echo "==> enable Funnel on 443 (no root handler)"
-tailscale funnel --bg --yes 443 on
+echo "==> enable Funnel (no root handler)"
+if ! tailscale funnel --bg on; then
+  # Older/newer variants
+  tailscale funnel --bg 443 on || true
+fi
 
 echo "==> status"
 tailscale serve status
