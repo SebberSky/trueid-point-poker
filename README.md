@@ -38,19 +38,18 @@ cd client && npm install && npm run dev
 
 รันบนเครื่อง **`agent3s-imac`** คู่กับ TrueID Office — ใช้ **Jenkins webhook / pm2**  
 พอร์ตไม่ชน office: **web `5174` / API `3002`** (office = `5173` / `3001`)  
-Vite `base` = **`/poker/`** · Office ใช้ **`/office/`** · Root **`/`** = portal grid
+Vite `base` = **`/poker/`** · Office ใช้ **`/office/`** · Root **`/`** = [trueid-portal](https://github.com/SebberSky/trueid-portal)
 
 ### ให้คนอื่นเข้า
 
 | ใคร | URL |
 |-----|-----|
-| Portal | `https://agent3s-imac.taildc5084.ts.net/` |
+| Portal | `https://agent3s-imac.taildc5084.ts.net/` ([trueid-portal](https://github.com/SebberSky/trueid-portal)) |
 | Point Poker | `https://agent3s-imac.taildc5084.ts.net/poker/` |
 | TrueID Office | `https://agent3s-imac.taildc5084.ts.net/office/` |
-| เครื่องโฮสต์ portal | `http://localhost:5170/` |
 | เครื่องโฮสต์ poker | `http://localhost:5174/poker/` |
 
-Webhook จะ: sync `~/apps/trueid-point-poker` → `npm ci` → `pm2` (poker + portal)
+Webhook จะ: sync `~/apps/trueid-point-poker` → `npm ci` → `pm2` (poker only)
 
 ### ครั้งแรกบน agent3
 
@@ -66,10 +65,14 @@ npx pm2 save
 # (ออปชัน) ขึ้นหลังรีบูต: npx pm2 startup
 ```
 
+Portal (Funnel `/`) แยก repo — clone + pm2 จาก [trueid-portal](https://github.com/SebberSky/trueid-portal).
+
 ### Tailscale Serve / Funnel
 
+ตั้ง path จาก portal repo:
+
 ```bash
-cd ~/apps/trueid-point-poker
+cd ~/apps/trueid-portal
 bash scripts/configure-funnel-paths.sh
 #   /        → http://127.0.0.1:5170        (portal)
 #   /office  → http://127.0.0.1:5173/office
