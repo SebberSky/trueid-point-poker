@@ -11,8 +11,10 @@ let socket: Socket | null = null
 
 export function getSocket(): Socket {
   if (!socket) {
+    const base = String(import.meta.env.BASE_URL || '/').replace(/\/+$/, '')
     const options = {
       autoConnect: true,
+      path: `${base}/socket.io`,
       transports: ['websocket', 'polling'] as ('websocket' | 'polling')[],
     }
     socket = SERVER_URL ? io(SERVER_URL, options) : io(options)
