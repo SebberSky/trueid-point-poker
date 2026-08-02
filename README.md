@@ -17,7 +17,7 @@ No UI link. Open:
 
 `/<ADMIN_PATH>`
 
-Default: [`/room-hosts-ctrl`](http://localhost:5173/room-hosts-ctrl)
+Default: [`/room-hosts-ctrl`](http://localhost:5174/room-hosts-ctrl)
 
 Set host emails per room there. Configure `ADMIN_PATH` in `server/.env`.
 
@@ -29,5 +29,5 @@ cd server && npm install && npm run dev
 cd client && npm install && npm run dev
 ```
 
-- App: http://localhost:5173
-- API: http://localhost:3001
+- App: http://localhost:5174
+- API: http://localhost:3002
