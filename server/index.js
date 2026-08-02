@@ -48,8 +48,29 @@ const {
   fetchAttachmentBinary,
   setIssueStoryPoints,
   listAllBoards,
+  defaultJiraAuth,
   verifyHostJiraAccess,
 } = await import('./jira.js')
+
+/**
+ * Prefer room-host token when configured; otherwise server default (JIRA_*).
+ * @param {string} [roomId]
+ * @returns {{ email: string, token: string }}
+ */
+function resolveJiraAuth(roomId) {
+  const host = roomId ? getRoomHostAuth(roomId) : null
+  if (host) return host
+  return defaultJiraAuth()
+}
+
+/**
+ * @param {import('express').Request} req
+ */
+function roomIdFromRequest(req) {
+  return String(req.query?.roomId || req.body?.roomId || '')
+    .trim()
+    .toUpperCase()
+}
 
 const app = express()
 app.use(cors())
@@ -143,7 +164,9 @@ app.post('/api/boards', async (req, res) => {
 
 app.get('/api/boards/:boardId/planning', async (req, res) => {
   try {
-    const result = await getBoardPlanningTickets(req.params.boardId)
+    const roomId = roomIdFromRequest(req)
+    const auth = resolveJiraAuth(roomId)
+    const result = await getBoardPlanningTickets(req.params.boardId, auth)
     if (result.error) {
       res.status(result.status || 400).json({ error: result.error })
       return
@@ -157,7 +180,8 @@ app.get('/api/boards/:boardId/planning', async (req, res) => {
 
 app.get('/api/attachments/:id/content', async (req, res) => {
   try {
-    const result = await fetchAttachmentBinary(req.params.id, 'content')
+    const auth = resolveJiraAuth(roomIdFromRequest(req))
+    const result = await fetchAttachmentBinary(req.params.id, 'content', auth)
     if (result.error) {
       res.status(result.status || 400).json({ error: result.error })
       return
@@ -173,9 +197,10 @@ app.get('/api/attachments/:id/content', async (req, res) => {
 
 app.get('/api/attachments/:id/thumbnail', async (req, res) => {
   try {
-    const result = await fetchAttachmentBinary(req.params.id, 'thumbnail')
+    const auth = resolveJiraAuth(roomIdFromRequest(req))
+    const result = await fetchAttachmentBinary(req.params.id, 'thumbnail', auth)
     if (result.error) {
-      const fallback = await fetchAttachmentBinary(req.params.id, 'content')
+      const fallback = await fetchAttachmentBinary(req.params.id, 'content', auth)
       if (fallback.error) {
         res.status(fallback.status || 400).json({ error: fallback.error })
         return
@@ -196,7 +221,8 @@ app.get('/api/attachments/:id/thumbnail', async (req, res) => {
 
 app.get('/api/issues/search', async (req, res) => {
   try {
-    const result = await searchIssues(String(req.query.q || ''))
+    const auth = resolveJiraAuth(roomIdFromRequest(req))
+    const result = await searchIssues(String(req.query.q || ''), auth)
     if (result.error) {
       res.status(result.status || 400).json({ error: result.error })
       return
@@ -210,7 +236,9 @@ app.get('/api/issues/search', async (req, res) => {
 
 app.get('/api/issues/:key', async (req, res) => {
   try {
-    const result = await getIssueDetails(req.params.key)
+    const roomId = roomIdFromRequest(req)
+    const auth = resolveJiraAuth(roomId)
+    const result = await getIssueDetails(req.params.key, auth, roomId)
     if (result.error) {
       res.status(result.status || 400).json({ error: result.error })
       return
@@ -236,20 +264,22 @@ app.put('/api/issues/:key/story-points', async (req, res) => {
     return
   }
 
-  const hostAuth = getRoomHostAuth(roomId)
-  if (!hostAuth || hostAuth.email !== hostEmail) {
+  const roomHostAuth = getRoomHostAuth(roomId)
+  if (roomHostAuth && roomHostAuth.email !== hostEmail) {
     res.status(400).json({
       error: 'Room host API token is not configured for this host',
     })
     return
   }
 
+  const auth = roomHostAuth || resolveJiraAuth(roomId)
+
   try {
     const result = await setIssueStoryPoints(
       req.params.key,
       req.body?.points,
       req.body?.boardId,
-      hostAuth,
+      auth,
     )
     if (result.error) {
       res.status(result.status || 400).json({ error: result.error })

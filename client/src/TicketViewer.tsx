@@ -48,8 +48,14 @@ export type IssueDetails = {
   }>
 }
 
-export async function fetchIssueDetails(key: string): Promise<IssueDetails> {
-  const res = await fetch(appUrl(`/api/issues/${encodeURIComponent(key)}`))
+export async function fetchIssueDetails(
+  key: string,
+  roomId?: string,
+): Promise<IssueDetails> {
+  const qs = roomId
+    ? `?roomId=${encodeURIComponent(roomId.trim().toUpperCase())}`
+    : ''
+  const res = await fetch(appUrl(`/api/issues/${encodeURIComponent(key)}${qs}`))
   const data = await res.json()
   if (!res.ok) throw new Error(data?.error || 'Failed to load issue')
   return data as IssueDetails
@@ -57,12 +63,14 @@ export async function fetchIssueDetails(key: string): Promise<IssueDetails> {
 
 type TicketViewerProps = {
   issueKey: string
+  roomId?: string
   fallbackSummary?: string
   fallbackUrl?: string
 }
 
 export function TicketViewer({
   issueKey,
+  roomId,
   fallbackSummary = '',
   fallbackUrl = '',
 }: TicketViewerProps) {
@@ -75,7 +83,7 @@ export function TicketViewer({
     setBusy(true)
     setError(null)
     setIssue(null)
-    fetchIssueDetails(issueKey)
+    fetchIssueDetails(issueKey, roomId)
       .then((data) => {
         if (!cancelled) setIssue(data)
       })
@@ -90,7 +98,7 @@ export function TicketViewer({
     return () => {
       cancelled = true
     }
-  }, [issueKey])
+  }, [issueKey, roomId])
 
   if (busy) {
     return (

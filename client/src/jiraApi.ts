@@ -123,8 +123,14 @@ export async function denyRoomMember(payload: {
   return data
 }
 
-export async function fetchPlanningTickets(boardId: number): Promise<import('./types').PlanningData> {
-  const res = await fetch(appUrl(`/api/boards/${boardId}/planning`))
+export async function fetchPlanningTickets(
+  boardId: number,
+  roomId?: string,
+): Promise<import('./types').PlanningData> {
+  const qs = roomId
+    ? `?roomId=${encodeURIComponent(roomId.trim().toUpperCase())}`
+    : ''
+  const res = await fetch(appUrl(`/api/boards/${boardId}/planning${qs}`))
   const data = await res.json()
   if (!res.ok) throw new Error(data?.error || 'Failed to load tickets')
   return data
@@ -132,8 +138,11 @@ export async function fetchPlanningTickets(boardId: number): Promise<import('./t
 
 export async function searchIssues(
   query: string,
+  roomId?: string,
 ): Promise<{ query: string; issues: import('./types').PlanningIssue[] }> {
-  const res = await fetch(appUrl(`/api/issues/search?q=${encodeURIComponent(query.trim())}`))
+  const params = new URLSearchParams({ q: query.trim() })
+  if (roomId) params.set('roomId', roomId.trim().toUpperCase())
+  const res = await fetch(appUrl(`/api/issues/search?${params}`))
   const data = await res.json()
   if (!res.ok) throw new Error(data?.error || 'Search failed')
   return data
