@@ -7,6 +7,9 @@
 //   3. Agent label below matches this machine (change if needed)
 //   4. Job: Pipeline from SCM → https://github.com/SebberSky/trueid-point-poker
 //      Script Path: Jenkinsfile
+//   5. Build once (manual) so the GenericTrigger token is registered
+//   6. Webhook URL (Jenkins 2.5xx / Generic Webhook Trigger):
+//      http://<JENKINS_URL>/generic-webhook-trigger/invoke?token=trueid-point-poker
 
 pipeline {
   agent { label 'agent3' }
@@ -15,6 +18,18 @@ pipeline {
     timestamps()
     disableConcurrentBuilds()
     buildDiscarder(logRotator(numToKeepStr: '20'))
+  }
+
+  // Token lives here — Jenkins 2.5xx job UI often has no Token field for Pipeline-from-SCM.
+  // After first successful run, Configure → Build Triggers will show Generic Webhook Trigger checked.
+  triggers {
+    GenericTrigger(
+      token: 'trueid-point-poker',
+      causeString: 'Generic webhook for trueid-point-poker',
+      printContributedVariables: false,
+      printPostContent: false,
+      silentResponse: false
+    )
   }
 
   stages {
