@@ -1,14 +1,13 @@
 #!/usr/bin/env bash
 # Configure Tailscale Funnel path split on agent3.
-# Root (/) is intentionally unmapped — only /poker and /office.
+# Root (/) unmapped — only /poker and /office.
 #
-# Use `tailscale funnel` with --set-path (NOT `funnel --bg on` — "on" is parsed as a bad target).
-# Example:
-#   tailscale funnel --bg --set-path=/poker http://127.0.0.1:5174
+# Upstream MUST include the mount path so Vite receives /poker/... and /office/...
+# (not stripped to /). Otherwise absolute asset URLs 404 at the Funnel root.
 set -euo pipefail
 
-OFFICE_UPSTREAM="${OFFICE_UPSTREAM:-http://127.0.0.1:5173}"
-POKER_UPSTREAM="${POKER_UPSTREAM:-http://127.0.0.1:5174}"
+OFFICE_UPSTREAM="${OFFICE_UPSTREAM:-http://127.0.0.1:5173/office}"
+POKER_UPSTREAM="${POKER_UPSTREAM:-http://127.0.0.1:5174/poker}"
 
 if ! command -v tailscale >/dev/null 2>&1; then
   echo "ERROR: tailscale CLI not found" >&2
@@ -40,4 +39,4 @@ echo "  office         https://agent3s-imac.taildc5084.ts.net/office/"
 echo "  poker          https://agent3s-imac.taildc5084.ts.net/poker/"
 echo
 echo "Do NOT run: tailscale funnel --bg on"
-echo "  (CLI treats 'on' as the upstream target → http://on error)"
+echo "Re-run this after Funnel changes; then Jenkins/pm2 restart the apps."

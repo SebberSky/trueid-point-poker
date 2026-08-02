@@ -1,23 +1,19 @@
-/** Funnel mount prefix from the browser path (`/poker`, or '' on localhost). */
+/** Funnel mount prefix (`/poker`). */
 export function mountPrefix(): string {
-  const path = window.location.pathname
-  if (path === '/poker' || path.startsWith('/poker/')) return '/poker'
-  return ''
+  return '/poker'
 }
 
-/** Browser URL for API/assets under Funnel (`/poker/api/...`) or local (`/api/...`). */
+/** Browser URL under /poker (e.g. `/poker/api/...`). */
 export function appUrl(path: string): string {
   const clean = path.replace(/^\//, '')
-  const mount = mountPrefix()
-  return `${mount}/${clean}`.replace(/\/{2,}/g, '/')
+  return `/poker/${clean}`.replace(/\/{2,}/g, '/')
 }
 
-/** Pathname without `/poker` mount (no leading/trailing slashes). */
+/** Pathname without `/poker` (no leading/trailing slashes). */
 export function appPathname(): string {
   let path = window.location.pathname
-  const mount = mountPrefix()
-  if (mount && (path === mount || path.startsWith(`${mount}/`))) {
-    path = path.slice(mount.length)
+  if (path === '/poker' || path.startsWith('/poker/')) {
+    path = path.slice('/poker'.length)
   }
   return path.replace(/^\/+|\/+$/g, '')
 }

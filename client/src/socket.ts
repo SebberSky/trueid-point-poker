@@ -1,5 +1,4 @@
 import { io, type Socket } from 'socket.io-client'
-import { mountPrefix } from './appUrl'
 import type { RoomState } from './types'
 
 const SERVER_URL = import.meta.env.VITE_SERVER_URL as string | undefined
@@ -12,10 +11,9 @@ let socket: Socket | null = null
 
 export function getSocket(): Socket {
   if (!socket) {
-    const mount = mountPrefix()
     const options = {
       autoConnect: true,
-      path: mount ? `${mount}/socket.io` : '/socket.io',
+      path: '/poker/socket.io',
       transports: ['websocket', 'polling'] as ('websocket' | 'polling')[],
     }
     socket = SERVER_URL ? io(SERVER_URL, options) : io(options)
