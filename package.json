@@ -3,9 +3,14 @@
   "version": "1.0.0",
   "private": true,
   "scripts": {
+    "dev": "concurrently -k -n web,api -c cyan,magenta \"npm run dev --prefix client -- --host\" \"npm run start --prefix server\"",
     "dev:client": "npm run dev --prefix client",
     "dev:server": "npm run dev --prefix server",
     "build": "npm run build --prefix client",
     "start": "npm run start --prefix server"
+  },
+  "devDependencies": {
+    "concurrently": "^10.0.3",
+    "pm2": "^6.0.14"
   }
 }
