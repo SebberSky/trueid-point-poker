@@ -14,10 +14,6 @@
     <style>
       :root {
         --void: #07010f;
-        --nebula-a: #2a0640;
-        --nebula-b: #6b0f3a;
-        --nebula-c: #c8102e;
-        --violet: #8b5cf6;
         --mist: #f3e8ff;
         --ease: cubic-bezier(0.22, 1, 0.36, 1);
       }
@@ -88,23 +84,26 @@
         animation: drift 72s linear infinite reverse;
       }
 
-      .logo-bg {
+      .brand {
         position: absolute;
+        top: clamp(0.75rem, 2.5vh, 1.5rem);
         left: 50%;
-        top: 46%;
-        width: min(92vw, 920px);
-        aspect-ratio: 16 / 9;
-        transform: translate(-50%, -50%);
-        opacity: 0.22;
-        filter: saturate(1.15) brightness(1.05);
+        transform: translateX(-50%);
+        z-index: 5;
+        width: clamp(5.75rem, 14vw, 9rem);
+        aspect-ratio: 1 / 1;
         pointer-events: none;
-        z-index: 1;
-        mix-blend-mode: screen;
       }
 
-      .logo-bg__lottie {
+      .brand__lottie {
         width: 100%;
         height: 100%;
+      }
+
+      .brand__lottie canvas {
+        display: block;
+        width: 100% !important;
+        height: 100% !important;
       }
 
       .haze {
@@ -118,38 +117,17 @@
         animation: pulse 10s ease-in-out infinite;
       }
 
-      .brand {
-        position: absolute;
-        top: clamp(1.4rem, 4vh, 2.8rem);
-        left: 50%;
-        transform: translateX(-50%);
-        z-index: 5;
-        text-align: center;
-        pointer-events: none;
-      }
-
-      .brand__mark {
-        font-family: Orbitron, sans-serif;
-        font-weight: 700;
-        font-size: clamp(1.15rem, 2.4vw, 1.55rem);
-        letter-spacing: 0.35em;
-        text-transform: uppercase;
-        color: rgba(243, 232, 255, 0.72);
-      }
-
-      .brand__mark span {
-        color: #ff4d6d;
-      }
-
       .field {
         position: absolute;
         inset: 0;
         z-index: 4;
         display: grid;
-        place-items: center;
         grid-template-columns: 1fr 1fr;
-        gap: clamp(1rem, 6vw, 6rem);
-        padding: clamp(5rem, 12vh, 8rem) clamp(1.25rem, 6vw, 5rem) clamp(2rem, 6vh, 4rem);
+        grid-template-rows: 1fr;
+        gap: 0;
+        padding: 0;
+        width: 100%;
+        height: 100%;
       }
 
       .star {
@@ -157,85 +135,84 @@
         display: flex;
         flex-direction: column;
         align-items: center;
+        justify-content: center;
         text-align: center;
         text-decoration: none;
         color: inherit;
-        width: min(100%, 22rem);
-        padding: 2.5rem 1.5rem;
+        width: 100%;
+        height: 100%;
+        min-height: 0;
+        padding: clamp(1.5rem, 4vw, 3rem);
         border: 0;
         background: transparent;
-        isolation: isolate;
-        animation: float 7s ease-in-out infinite;
       }
 
-      .star--poker {
-        animation-delay: -3.2s;
-        justify-self: start;
-        margin-top: 8vh;
-      }
-
+      .star--poker,
       .star--office {
-        justify-self: end;
-        margin-bottom: 6vh;
+        justify-self: stretch;
+        align-self: stretch;
+        margin: 0;
       }
 
-      .star__glow {
-        position: absolute;
-        inset: 10% 5%;
-        z-index: 0;
-        border-radius: 50%;
-        background: radial-gradient(circle, rgba(200, 16, 46, 0.35) 0%, transparent 68%);
-        filter: blur(28px);
-        opacity: 0.75;
-        transition: opacity 0.5s var(--ease), transform 0.7s var(--ease);
-        pointer-events: none;
-      }
-
-      .star--office .star__glow {
-        background: radial-gradient(circle, rgba(139, 92, 246, 0.4) 0%, transparent 68%);
-      }
-
-      .star:hover .star__glow,
-      .star:focus-visible .star__glow {
-        opacity: 1;
-        transform: scale(1.18);
-      }
-
-      .star__mark {
+      .star__icon-wrap {
         position: relative;
         z-index: 1;
-        width: clamp(4.5rem, 12vw, 6.5rem);
-        height: clamp(4.5rem, 12vw, 6.5rem);
-        margin-bottom: 1.35rem;
         display: grid;
         place-items: center;
+        margin-bottom: 1.25rem;
+        width: clamp(6.5rem, 18vw, 11rem);
+        height: clamp(6.5rem, 18vw, 11rem);
+      }
+
+      .star__icon-wrap::before {
+        content: '';
+        position: absolute;
+        left: 50%;
+        top: 50%;
+        width: 160%;
+        height: 160%;
+        transform: translate(-50%, -50%);
         border-radius: 50%;
-        background:
-          radial-gradient(circle at 35% 30%, rgba(255, 255, 255, 0.35), transparent 45%),
-          radial-gradient(circle at 50% 50%, rgba(200, 16, 46, 0.55), rgba(42, 6, 64, 0.15) 70%);
-        box-shadow: 0 0 40px rgba(200, 16, 46, 0.25);
-        transition: transform 0.55s var(--ease);
+        background: radial-gradient(
+          circle,
+          rgba(255, 255, 255, 0.55) 0%,
+          rgba(255, 255, 255, 0.22) 35%,
+          rgba(255, 255, 255, 0) 70%
+        );
+        filter: blur(18px);
+        opacity: 0.85;
+        pointer-events: none;
+        z-index: 0;
+        transition: opacity 0.45s var(--ease), transform 0.55s var(--ease), width 0.55s var(--ease),
+          height 0.55s var(--ease);
       }
 
-      .star--office .star__mark {
-        background:
-          radial-gradient(circle at 35% 30%, rgba(255, 255, 255, 0.35), transparent 45%),
-          radial-gradient(circle at 50% 50%, rgba(139, 92, 246, 0.55), rgba(42, 6, 64, 0.15) 70%);
-        box-shadow: 0 0 40px rgba(139, 92, 246, 0.28);
+      .star:hover .star__icon-wrap::before,
+      .star:focus-visible .star__icon-wrap::before {
+        opacity: 1;
+        width: 210%;
+        height: 210%;
+        filter: blur(26px);
+        background: radial-gradient(
+          circle,
+          rgba(255, 255, 255, 0.85) 0%,
+          rgba(255, 255, 255, 0.35) 38%,
+          rgba(255, 255, 255, 0) 72%
+        );
       }
 
-      .star:hover .star__mark,
-      .star:focus-visible .star__mark {
-        transform: scale(1.08);
+      .star__icon {
+        position: relative;
+        z-index: 1;
+        width: 100%;
+        height: 100%;
+        object-fit: contain;
+        transition: transform 0.4s var(--ease);
       }
 
-      .star__glyph {
-        font-family: Orbitron, sans-serif;
-        font-weight: 700;
-        font-size: clamp(1.15rem, 3vw, 1.55rem);
-        letter-spacing: 0.04em;
-        color: #fff;
-        text-shadow: 0 0 18px rgba(255, 255, 255, 0.35);
+      .star:hover .star__icon,
+      .star:focus-visible .star__icon {
+        transform: scale(1.06);
       }
 
       .star__name {
@@ -282,30 +259,6 @@
         }
       }
 
-      @keyframes float {
-        0%,
-        100% {
-          transform: translateY(0) translateX(0);
-        }
-        50% {
-          transform: translateY(-18px) translateX(6px);
-        }
-      }
-
-      .star--poker {
-        animation-name: float-alt;
-      }
-
-      @keyframes float-alt {
-        0%,
-        100% {
-          transform: translateY(0) translateX(0);
-        }
-        50% {
-          transform: translateY(-14px) translateX(-10px);
-        }
-      }
-
       @keyframes pulse {
         0%,
         100% {
@@ -319,19 +272,17 @@
       @media (max-width: 780px) {
         .field {
           grid-template-columns: 1fr;
-          gap: 2.5rem;
-          padding-top: 6.5rem;
+          grid-template-rows: 1fr 1fr;
         }
 
         .star--office,
         .star--poker {
-          justify-self: center;
+          justify-self: stretch;
           margin: 0;
         }
 
-        .logo-bg {
-          width: 140vw;
-          opacity: 0.16;
+        .brand {
+          width: clamp(5rem, 26vw, 7rem);
         }
       }
 
@@ -349,26 +300,25 @@
     <main class="space">
       <div class="stars" aria-hidden="true"></div>
       <div class="stars-2" aria-hidden="true"></div>
-      <div class="logo-bg" aria-hidden="true">
-        <div class="logo-bg__lottie" id="tatang-logo"></div>
-      </div>
       <div class="haze" aria-hidden="true"></div>
 
-      <header class="brand">
-        <p class="brand__mark">True<span>ID</span></p>
+      <header class="brand" aria-label="TrueID">
+        <div class="brand__lottie" id="tatang-logo"></div>
       </header>
 
       <div class="field">
         <a class="star star--office" href="/office/">
-          <span class="star__glow" aria-hidden="true"></span>
-          <span class="star__mark" aria-hidden="true"><span class="star__glyph">O</span></span>
+          <span class="star__icon-wrap">
+            <img class="star__icon" src="./assets/office.svg" width="128" height="128" alt="" />
+          </span>
           <span class="star__name">Office</span>
           <span class="star__desc">Virtual workspace — เดินคุย แชร์จอ ในออฟฟิศบล็อก</span>
         </a>
 
         <a class="star star--poker" href="/poker/">
-          <span class="star__glow" aria-hidden="true"></span>
-          <span class="star__mark" aria-hidden="true"><span class="star__glyph">P</span></span>
+          <span class="star__icon-wrap">
+            <img class="star__icon" src="./assets/poker.svg" width="128" height="128" alt="" />
+          </span>
           <span class="star__name">Point Poker</span>
           <span class="star__desc">Realtime story-point voting ผูกกับ Jira boards</span>
         </a>
@@ -381,12 +331,36 @@
         var reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches
         var el = document.getElementById('tatang-logo')
         if (!el || !window.lottie) return
-        window.lottie.loadAnimation({
+
+        var LOOP_DELAY_MS = 3000
+        var restartTimer = null
+
+        var anim = window.lottie.loadAnimation({
           container: el,
-          renderer: 'svg',
-          loop: true,
-          autoplay: !reduced,
+          renderer: 'canvas',
+          loop: false,
+          autoplay: false,
           path: './assets/tatang-logo.json',
+          rendererSettings: {
+            clearCanvas: true,
+            preserveAspectRatio: 'xMidYMid meet',
+            progressiveLoad: true,
+            dpr: Math.min(window.devicePixelRatio || 1, 1.25),
+          },
+        })
+
+        anim.setSubframe(false)
+
+        anim.addEventListener('DOMLoaded', function () {
+          if (!reduced) anim.play()
+        })
+
+        anim.addEventListener('complete', function () {
+          if (reduced) return
+          clearTimeout(restartTimer)
+          restartTimer = setTimeout(function () {
+            anim.goToAndPlay(0, true)
+          }, LOOP_DELAY_MS)
         })
       })()
     </script>
