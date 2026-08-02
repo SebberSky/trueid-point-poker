@@ -1,15 +1,18 @@
 // Jenkinsfile — webhook / SCM trigger restarts Point Poker on the host via pm2.
 // Do NOT run `npm run dev` as a long-lived Jenkins stage (job would kill it on exit).
 //
-// Setup (once on agent3 Jenkins agent):
-//   1. Node + npm installed
-//   2. Permanent checkout at ~/apps/trueid-point-poker (+ server/.env)
-//   3. Agent label below matches this machine (change if needed)
-//   4. Job: Pipeline from SCM → https://github.com/SebberSky/trueid-point-poker
-//      Script Path: Jenkinsfile
-//   5. Build once (manual) so the GenericTrigger token is registered
-//   6. Webhook URL (Jenkins 2.5xx / Generic Webhook Trigger):
-//      http://<JENKINS_URL>/generic-webhook-trigger/invoke?token=trueid-point-poker
+// This Jenkins (2.568.x) has: upstream, cron, githubPush, pollSCM
+// — no Generic Webhook Trigger plugin, so we use githubPush.
+//
+// Setup (once on agent3):
+//   1. Permanent checkout: ~/apps/trueid-point-poker (+ server/.env)
+//   2. Job: Pipeline from SCM → https://github.com/SebberSky/trueid-point-poker
+//      Branch */main · Script Path: Jenkinsfile · agent label: agent3
+//   3. GitHub repo → Settings → Webhooks → Add webhook:
+//      Payload URL: http://<JENKINS_URL>/github-webhook/
+//      Content type: application/json
+//      Events: Just the push event
+//   4. Or Build Now manually anytime
 
 pipeline {
   agent { label 'agent3' }
@@ -20,16 +23,8 @@ pipeline {
     buildDiscarder(logRotator(numToKeepStr: '20'))
   }
 
-  // Token lives here — Jenkins 2.5xx job UI often has no Token field for Pipeline-from-SCM.
-  // After first successful run, Configure → Build Triggers will show Generic Webhook Trigger checked.
   triggers {
-    GenericTrigger(
-      token: 'trueid-point-poker',
-      causeString: 'Generic webhook for trueid-point-poker',
-      printContributedVariables: false,
-      printPostContent: false,
-      silentResponse: false
-    )
+    githubPush()
   }
 
   stages {
