@@ -10,7 +10,8 @@
     "start": "npm run start --prefix server",
     "share-info": "node scripts/share-info.mjs",
     "restart:host": "bash scripts/jenkins-restart.sh",
-    "funnel:paths": "bash scripts/configure-funnel-paths.sh"
+    "funnel:paths": "bash scripts/configure-funnel-paths.sh",
+    "portal": "node portal/server.mjs"
   },
   "devDependencies": {
     "concurrently": "^10.0.3",
