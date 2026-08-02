@@ -70,10 +70,11 @@ cd ~/apps/trueid-point-poker
 bash scripts/configure-funnel-paths.sh
 # หรือมือ:
 #   tailscale serve reset
-#   tailscale serve --bg --set-path /office http://127.0.0.1:5173
-#   tailscale serve --bg --set-path /poker  http://127.0.0.1:5174
-#   tailscale funnel --bg on
-#   tailscale serve status
+#   tailscale funnel reset
+#   tailscale funnel --bg --set-path=/office http://127.0.0.1:5173
+#   tailscale funnel --bg --set-path=/poker  http://127.0.0.1:5174
+#   tailscale funnel status
+# ห้ามรัน: tailscale funnel --bg on  (จะ error target "http://on")
 ```
 
 จากนั้นเปิดเฉพาะ:

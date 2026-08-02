@@ -22,10 +22,10 @@ API health:              http://localhost:${API_PORT}/health
 ตั้ง Funnel path (ครั้งเดียวบนโฮสต์):
   bash scripts/configure-funnel-paths.sh
   # หรือมือ:
-  #   tailscale serve reset
-  #   tailscale serve --bg --set-path /office http://127.0.0.1:5173
-  #   tailscale serve --bg --set-path /poker  http://127.0.0.1:5174
-  #   tailscale funnel --bg on
+  #   tailscale serve reset; tailscale funnel reset
+  #   tailscale funnel --bg --set-path=/office http://127.0.0.1:5173
+  #   tailscale funnel --bg --set-path=/poker  http://127.0.0.1:5174
+  # ห้าม: tailscale funnel --bg on   ← CLI จะไปยิง target "http://on"
 
 สำคัญ
 • โฮสต์รันผ่าน pm2 จาก ~/apps/trueid-point-poker (Jenkins webhook)
