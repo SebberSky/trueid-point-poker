@@ -36,18 +36,19 @@ cd client && npm install && npm run dev
 
 รันบนเครื่อง **`agent3s-imac`** คู่กับ TrueID Office — ใช้ **Jenkins webhook / pm2**  
 พอร์ตไม่ชน office: **web `5174` / API `3002`** (office = `5173` / `3001`)  
-Vite `base` = **`/poker/`** · Office ใช้ **`/office/`** · Funnel **root `/` ไม่ผูกแอป**
+Vite `base` = **`/poker/`** · Office ใช้ **`/office/`** · Root **`/`** = portal grid
 
 ### ให้คนอื่นเข้า
 
 | ใคร | URL |
 |-----|-----|
+| Portal | `https://agent3s-imac.taildc5084.ts.net/` |
 | Point Poker | `https://agent3s-imac.taildc5084.ts.net/poker/` |
 | TrueID Office | `https://agent3s-imac.taildc5084.ts.net/office/` |
-| Root `/` | ไม่พาไปแอปไหน (ต้องใส่ path เอง) |
-| เครื่องโฮสต์เอง | `http://localhost:5174/poker/` |
+| เครื่องโฮสต์ portal | `http://localhost:5170/` |
+| เครื่องโฮสต์ poker | `http://localhost:5174/poker/` |
 
-Webhook จะ: sync `~/apps/trueid-point-poker` → `npm ci` (root/server/client) → `pm2 restart`
+Webhook จะ: sync `~/apps/trueid-point-poker` → `npm ci` → `pm2` (poker + portal)
 
 ### ครั้งแรกบน agent3
 
@@ -63,24 +64,22 @@ npx pm2 save
 # (ออปชัน) ขึ้นหลังรีบูต: npx pm2 startup
 ```
 
-### Tailscale Serve / Funnel (path แยก — ไม่ผูก `/`)
+### Tailscale Serve / Funnel
 
 ```bash
 cd ~/apps/trueid-point-poker
 bash scripts/configure-funnel-paths.sh
-# หรือมือ:
-#   tailscale serve reset
-#   tailscale funnel reset
-#   tailscale funnel --bg --set-path=/office http://127.0.0.1:5173/office
-#   tailscale funnel --bg --set-path=/poker  http://127.0.0.1:5174/poker
-#   tailscale funnel status
-# ห้ามรัน: tailscale funnel --bg on  (จะ error target "http://on")
+#   /        → http://127.0.0.1:5170        (portal)
+#   /office  → http://127.0.0.1:5173/office
+#   /poker   → http://127.0.0.1:5174/poker
+# ห้ามรัน: tailscale funnel --bg on
 ```
 
-จากนั้นเปิดเฉพาะ:
+จากนั้นเปิด:
 
-- https://agent3s-imac.taildc5084.ts.net/poker/
+- https://agent3s-imac.taildc5084.ts.net/ — portal
 - https://agent3s-imac.taildc5084.ts.net/office/
+- https://agent3s-imac.taildc5084.ts.net/poker/
 
 ### Jenkins job (2.568.x — มี `githubPush` ไม่มี Generic Webhook Trigger)
 
