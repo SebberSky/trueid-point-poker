@@ -1,34 +1,58 @@
-import { defineConfig } from 'vite'
+import { defineConfig, type Plugin } from 'vite'
 import react from '@vitejs/plugin-react'
 
-/**
- * Funnel `--set-path=/poker` forwards `/poker/...` as `/...` to Vite.
- * Absolute base `/poker/` then 302s `/` → `/poker/` forever — use relative base.
- */
+const MOUNT = '/poker'
+
+/** Ensure absolute root URLs in index.html are mounted under /poker for Funnel. */
+function mountAbsoluteUrls(): Plugin {
+  return {
+    name: 'mount-absolute-urls',
+    transformIndexHtml: {
+      order: 'post',
+      handler(html) {
+        return html
+          .replace(/(href|src)="\/(?!\/|poker\/)/g, `$1="${MOUNT}/`)
+          .replace(/(href|src)='\/(?!\/|poker\/)/g, `$1='${MOUNT}/`)
+          .replace(/(from )(["'])\/(?!\/|poker\/)/g, `$1$2${MOUNT}/`)
+          .replace(/(url\(['"]?)\/(?!\/|poker\/)/g, `$1${MOUNT}/`)
+      },
+    },
+  }
+}
+
 export default defineConfig({
-  base: './',
-  plugins: [react()],
+  // Public URLs under Funnel /poker — upstream must forward /poker/* to Vite (see funnel script).
+  base: `${MOUNT}/`,
+  plugins: [react(), mountAbsoluteUrls()],
   server: {
     host: true,
     port: 5174,
     allowedHosts: true,
     proxy: {
-      '/api': {
+      [`${MOUNT}/api`]: {
         target: 'http://127.0.0.1:3002',
+        rewrite: (p) => p.replace(new RegExp(`^${MOUNT}`), ''),
       },
-      '/socket.io': {
+      [`${MOUNT}/socket.io`]: {
         target: 'http://127.0.0.1:3002',
         ws: true,
+        rewrite: (p) => p.replace(new RegExp(`^${MOUNT}`), ''),
       },
-      // Local visits to /poker/... without Funnel strip
-      '/poker/api': {
+    },
+  },
+  preview: {
+    host: true,
+    port: 5174,
+    allowedHosts: true,
+    proxy: {
+      [`${MOUNT}/api`]: {
         target: 'http://127.0.0.1:3002',
-        rewrite: (p) => p.replace(/^\/poker/, ''),
+        rewrite: (p) => p.replace(new RegExp(`^${MOUNT}`), ''),
       },
-      '/poker/socket.io': {
+      [`${MOUNT}/socket.io`]: {
         target: 'http://127.0.0.1:3002',
         ws: true,
-        rewrite: (p) => p.replace(/^\/poker/, ''),
+        rewrite: (p) => p.replace(new RegExp(`^${MOUNT}`), ''),
       },
     },
   },

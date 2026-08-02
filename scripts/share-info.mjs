@@ -23,8 +23,8 @@ API health:              http://localhost:${API_PORT}/health
   bash scripts/configure-funnel-paths.sh
   # หรือมือ:
   #   tailscale serve reset; tailscale funnel reset
-  #   tailscale funnel --bg --set-path=/office http://127.0.0.1:5173
-  #   tailscale funnel --bg --set-path=/poker  http://127.0.0.1:5174
+  #   tailscale funnel --bg --set-path=/office http://127.0.0.1:5173/office
+  #   tailscale funnel --bg --set-path=/poker  http://127.0.0.1:5174/poker
   # ห้าม: tailscale funnel --bg on   ← CLI จะไปยิง target "http://on"
 
 สำคัญ
