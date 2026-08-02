@@ -4,6 +4,7 @@ import { Room } from './Room'
 import { AdminPage } from './AdminPage'
 import { usePokerSession } from './usePokerSession'
 import { ADMIN_PATH } from './jiraApi'
+import { appPathname } from './appUrl'
 import { bindIdentity, getSocket } from './socket'
 import {
   clearSession,
@@ -16,7 +17,7 @@ import {
 import './App.css'
 
 function App() {
-  const path = window.location.pathname.replace(/^\/+|\/+$/g, '')
+  const path = appPathname()
   if (path === ADMIN_PATH) {
     return <AdminPage />
   }

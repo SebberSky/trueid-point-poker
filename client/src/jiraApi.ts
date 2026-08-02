@@ -1,3 +1,4 @@
+import { appUrl } from './appUrl'
 export type JiraBoard = {
   id: number
   name: string
@@ -64,7 +65,7 @@ export function isAllowedWorkEmail(email: string) {
 }
 
 export async function fetchBoardsForEmail(email: string): Promise<BoardsResponse> {
-  const res = await fetch('/api/boards', {
+  const res = await fetch(appUrl('/api/boards'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ email: email.trim().toLowerCase() }),
@@ -79,7 +80,7 @@ export async function requestRoomAccess(payload: {
   email: string
   displayName: string
 }): Promise<AccessResponse> {
-  const res = await fetch(`/api/rooms/${encodeURIComponent(payload.roomId)}/access`, {
+  const res = await fetch(appUrl(`/api/rooms/${encodeURIComponent(payload.roomId)}/access`), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -97,7 +98,7 @@ export async function approveRoomMember(payload: {
   hostEmail: string
   email: string
 }) {
-  const res = await fetch(`/api/rooms/${encodeURIComponent(payload.roomId)}/approve`, {
+  const res = await fetch(appUrl(`/api/rooms/${encodeURIComponent(payload.roomId)}/approve`), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
@@ -112,7 +113,7 @@ export async function denyRoomMember(payload: {
   hostEmail: string
   email: string
 }) {
-  const res = await fetch(`/api/rooms/${encodeURIComponent(payload.roomId)}/deny`, {
+  const res = await fetch(appUrl(`/api/rooms/${encodeURIComponent(payload.roomId)}/deny`), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
@@ -123,7 +124,7 @@ export async function denyRoomMember(payload: {
 }
 
 export async function fetchPlanningTickets(boardId: number): Promise<import('./types').PlanningData> {
-  const res = await fetch(`/api/boards/${boardId}/planning`)
+  const res = await fetch(appUrl(`/api/boards/${boardId}/planning`))
   const data = await res.json()
   if (!res.ok) throw new Error(data?.error || 'Failed to load tickets')
   return data
@@ -132,7 +133,7 @@ export async function fetchPlanningTickets(boardId: number): Promise<import('./t
 export async function searchIssues(
   query: string,
 ): Promise<{ query: string; issues: import('./types').PlanningIssue[] }> {
-  const res = await fetch(`/api/issues/search?q=${encodeURIComponent(query.trim())}`)
+  const res = await fetch(appUrl(`/api/issues/search?q=${encodeURIComponent(query.trim())}`))
   const data = await res.json()
   if (!res.ok) throw new Error(data?.error || 'Search failed')
   return data
@@ -146,7 +147,7 @@ export async function setIssueStoryPoints(payload: {
   boardId?: number | null
 }) {
   const res = await fetch(
-    `/api/issues/${encodeURIComponent(payload.key)}/story-points`,
+    appUrl(`/api/issues/${encodeURIComponent(payload.key)}/story-points`),
     {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
@@ -190,7 +191,7 @@ function adminHeaders(extra?: HeadersInit): HeadersInit {
 }
 
 export async function adminLogin(email: string, password: string) {
-  const res = await fetch(`/api/${ADMIN_PATH}/login`, {
+  const res = await fetch(appUrl(`/api/${ADMIN_PATH}/login`), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -210,7 +211,7 @@ export async function adminLogout() {
   const token = getAdminToken()
   if (token) {
     try {
-      await fetch(`/api/${ADMIN_PATH}/logout`, {
+      await fetch(appUrl(`/api/${ADMIN_PATH}/logout`), {
         method: 'POST',
         headers: adminHeaders(),
       })
@@ -222,7 +223,7 @@ export async function adminLogout() {
 }
 
 export async function adminMe() {
-  const res = await fetch(`/api/${ADMIN_PATH}/me`, {
+  const res = await fetch(appUrl(`/api/${ADMIN_PATH}/me`), {
     headers: adminHeaders(),
   })
   if (res.status === 401) {
@@ -235,7 +236,7 @@ export async function adminMe() {
 }
 
 export async function adminListRooms() {
-  const res = await fetch(`/api/${ADMIN_PATH}/rooms`, {
+  const res = await fetch(appUrl(`/api/${ADMIN_PATH}/rooms`), {
     headers: adminHeaders(),
   })
   if (res.status === 401) {
@@ -256,7 +257,7 @@ export async function adminVerifyHost(payload: {
   apiToken: string
   boardId?: number | null
 }) {
-  const res = await fetch(`/api/${ADMIN_PATH}/verify-host`, {
+  const res = await fetch(appUrl(`/api/${ADMIN_PATH}/verify-host`), {
     method: 'POST',
     headers: adminHeaders({ 'Content-Type': 'application/json' }),
     body: JSON.stringify({
@@ -283,7 +284,7 @@ export async function adminSetHost(
   roomId: string,
   payload: { email: string; apiToken: string; boardId?: number | null },
 ) {
-  const res = await fetch(`/api/${ADMIN_PATH}/rooms/${encodeURIComponent(roomId)}/hosts`, {
+  const res = await fetch(appUrl(`/api/${ADMIN_PATH}/rooms/${encodeURIComponent(roomId)}/hosts`), {
     method: 'PUT',
     headers: adminHeaders({ 'Content-Type': 'application/json' }),
     body: JSON.stringify({

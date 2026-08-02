@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { AdfDocument } from './AdfDocument'
+import { appUrl } from './appUrl'
 
 export type IssueAttachment = {
   id: string
@@ -48,7 +49,7 @@ export type IssueDetails = {
 }
 
 export async function fetchIssueDetails(key: string): Promise<IssueDetails> {
-  const res = await fetch(`/api/issues/${encodeURIComponent(key)}`)
+  const res = await fetch(appUrl(`/api/issues/${encodeURIComponent(key)}`))
   const data = await res.json()
   if (!res.ok) throw new Error(data?.error || 'Failed to load issue')
   return data as IssueDetails

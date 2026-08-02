@@ -17,7 +17,7 @@ No UI link. Open:
 
 `/<ADMIN_PATH>`
 
-Default: [`/room-hosts-ctrl`](http://localhost:5174/room-hosts-ctrl)
+Default: [`/poker/room-hosts-ctrl`](http://localhost:5174/poker/room-hosts-ctrl)
 
 Set host emails per room there. Configure `ADMIN_PATH` in `server/.env`.
 
@@ -29,20 +29,22 @@ cd server && npm install && npm run dev
 cd client && npm install && npm run dev
 ```
 
-- App: http://localhost:5174
+- App: http://localhost:5174/poker/
 - API: http://localhost:3002
 
 ## Run (โฮสต์ = agent3)
 
 รันบนเครื่อง **`agent3s-imac`** คู่กับ TrueID Office — ใช้ **Jenkins webhook / pm2**  
-พอร์ตไม่ชน office: **web `5174` / API `3002`** (office = `5173` / `3001`)
+พอร์ตไม่ชน office: **web `5174` / API `3002`** (office = `5173` / `3001`)  
+Vite `base` = **`/poker/`** เพื่อแยก path บน Funnel hostname เดียวกับ office
 
 ### ให้คนอื่นเข้า
 
 | ใคร | URL |
 |-----|-----|
-| เครื่องโฮสต์เอง | `http://localhost:5174/` |
-| Tailscale / Funnel | ดู `npm run share-info` หลัง deploy |
+| Point Poker (Funnel) | `https://agent3s-imac.taildc5084.ts.net/poker/` |
+| TrueID Office (Funnel) | `https://agent3s-imac.taildc5084.ts.net/` |
+| เครื่องโฮสต์เอง | `http://localhost:5174/poker/` |
 
 Webhook จะ: sync `~/apps/trueid-point-poker` → `npm ci` (root/server/client) → `pm2 restart`
 
@@ -58,8 +60,20 @@ npm ci && npm ci --prefix server && npm ci --prefix client
 npx pm2 start ecosystem.config.cjs
 npx pm2 save
 # (ออปชัน) ขึ้นหลังรีบูต: npx pm2 startup
-# (ออปชัน) คนนอก: tailscale funnel --bg 5174
 ```
+
+### Tailscale Serve / Funnel (path แยก)
+
+ครั้งหนึ่งบนโฮสต์ — office ที่ `/`, poker ที่ `/poker`:
+
+```bash
+tailscale serve --bg https / http://127.0.0.1:5173
+tailscale serve --bg https /poker http://127.0.0.1:5174
+tailscale funnel --bg 443 on
+tailscale serve status
+```
+
+จากนั้นเปิด: https://agent3s-imac.taildc5084.ts.net/poker/
 
 ### Jenkins job (2.568.x — มี `githubPush` ไม่มี Generic Webhook Trigger)
 

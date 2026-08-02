@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react'
+import { appUrl } from './appUrl'
 
 type AdfMark = { type: string; attrs?: Record<string, unknown> }
 type AdfNode = {
@@ -72,7 +73,7 @@ function resolveMedia(
   if (options.mediaIndex?.[id]) return options.mediaIndex[id]
   if (/^\d+$/.test(id)) {
     return {
-      url: `/api/attachments/${id}/content`,
+      url: appUrl(`/api/attachments/${id}/content`),
       filename: String(node.attrs?.alt || id),
       kind: 'file',
       mimeType: '',
