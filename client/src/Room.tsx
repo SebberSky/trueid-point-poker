@@ -29,12 +29,11 @@ import {
 type RoomProps = {
   room: RoomState
   playerId: string
-  hostEmail: string
   onRoomUpdate: (room: RoomState) => void
   onLeave: () => void
 }
 
-export function Room({ room, playerId, hostEmail, onRoomUpdate, onLeave }: RoomProps) {
+export function Room({ room, playerId, onRoomUpdate, onLeave }: RoomProps) {
   const [localVote, setLocalVote] = useState<string | null>(null)
   const [pending, setPending] = useState<PendingMember[]>(room.pending || [])
   const [actionError, setActionError] = useState<string | null>(null)
@@ -187,7 +186,6 @@ export function Room({ room, playerId, hostEmail, onRoomUpdate, onLeave }: RoomP
     try {
       const data = await approveRoomMember({
         roomId: room.code,
-        hostEmail,
         email,
       })
       setPending(data.pending || [])
@@ -201,7 +199,6 @@ export function Room({ room, playerId, hostEmail, onRoomUpdate, onLeave }: RoomP
     try {
       const data = await denyRoomMember({
         roomId: room.code,
-        hostEmail,
         email,
       })
       setPending(data.pending || [])
@@ -219,7 +216,6 @@ export function Room({ room, playerId, hostEmail, onRoomUpdate, onLeave }: RoomP
         key: selected.key,
         points: storyPointsValue,
         roomId: room.code,
-        hostEmail,
         boardId: room.boardId,
       })
       resetRound()

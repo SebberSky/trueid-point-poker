@@ -1,7 +1,10 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
 import {
-  fetchBoardsForEmail,
+  fetchAuthMe,
+  fetchBoardsForSession,
   isAllowedWorkEmail,
+  JIRA_API_TOKEN_HELP_URL,
+  loginWithJiraToken,
   requestRoomAccess,
   type BoardsResponse,
   type JiraBoard,
@@ -54,6 +57,7 @@ export function Landing({
   onChangeEmail,
 }: LandingProps) {
   const [email, setEmail] = useState(restoreEmail)
+  const [apiToken, setApiToken] = useState('')
   const [lookupBusy, setLookupBusy] = useState(false)
   const [lookupError, setLookupError] = useState<string | null>(null)
   const [result, setResult] = useState<BoardsResponse | null>(null)
@@ -65,6 +69,8 @@ export function Landing({
   const restoredLookupRef = useRef(false)
 
   const emailOk = useMemo(() => isAllowedWorkEmail(email), [email])
+  const tokenOk = apiToken.trim().length > 0
+  const canSubmitLogin = emailOk && tokenOk && !lookupBusy
 
   const visibleBoards = useMemo(() => {
     if (!result) return []
@@ -88,27 +94,29 @@ export function Landing({
     localStorage.removeItem(nicknameStorageKey(emailAddress))
   }
 
-  async function lookupEmail(address: string) {
+  function applyBoards(data: BoardsResponse) {
+    const saved = loadSavedNickname(data.user.emailAddress)
+    const displayName = saved || data.user.displayName
+    setIsCustomNickname(Boolean(saved))
+    onNicknameChange(displayName)
+    onSessionStart({
+      email: data.user.emailAddress,
+      displayName,
+    })
+    setResult(data)
+    setEmail(data.user.emailAddress)
+    setApiToken('')
+    setEditingName(false)
+  }
+
+  async function loadBoardsForSession() {
     setLookupBusy(true)
     setLookupError(null)
     setBoardQuery('')
     onClearError()
     try {
-      const data = await fetchBoardsForEmail(address)
-      const saved = loadSavedNickname(data.user.emailAddress)
-      const displayName = saved || data.user.displayName
-      if (saved) {
-        setIsCustomNickname(true)
-      } else {
-        setIsCustomNickname(false)
-      }
-      onNicknameChange(displayName)
-      onSessionStart({
-        email: data.user.emailAddress,
-        displayName,
-      })
-      setResult(data)
-      setEditingName(false)
+      const data = await fetchBoardsForSession()
+      applyBoards(data)
     } catch (err) {
       setResult(null)
       setLookupError(err instanceof Error ? err.message : 'Lookup failed')
@@ -117,19 +125,40 @@ export function Landing({
     }
   }
 
+  async function handleLoginSubmit(event: FormEvent) {
+    event.preventDefault()
+    if (!canSubmitLogin) return
+    setLookupBusy(true)
+    setLookupError(null)
+    setBoardQuery('')
+    onClearError()
+    try {
+      await loginWithJiraToken({ email, apiToken })
+      const data = await fetchBoardsForSession()
+      applyBoards(data)
+    } catch (err) {
+      setResult(null)
+      setLookupError(err instanceof Error ? err.message : 'Login failed')
+    } finally {
+      setLookupBusy(false)
+    }
+  }
+
   useEffect(() => {
     if (restoredLookupRef.current) return
-    if (!restoreEmail || !isAllowedWorkEmail(restoreEmail) || pendingRoom) return
+    if (pendingRoom) return
     restoredLookupRef.current = true
-    setEmail(restoreEmail)
-    void lookupEmail(restoreEmail)
-  }, [restoreEmail, pendingRoom])
-
-  async function handleEmailSubmit(event: FormEvent) {
-    event.preventDefault()
-    if (!emailOk || lookupBusy) return
-    await lookupEmail(email)
-  }
+    void (async () => {
+      try {
+        const me = await fetchAuthMe()
+        if (!me?.user?.emailAddress) return
+        setEmail(me.user.emailAddress)
+        await loadBoardsForSession()
+      } catch {
+        // no server session — show login form
+      }
+    })()
+  }, [pendingRoom])
 
   function startEditName() {
     setNameDraft(isCustomNickname ? nickname : '')
@@ -164,7 +193,6 @@ export function Landing({
     try {
       const access = await requestRoomAccess({
         roomId,
-        email: result.user.emailAddress,
         displayName,
       })
       if (access.access === 'pending') {
@@ -284,10 +312,11 @@ export function Landing({
                   setResult(null)
                   setBoardQuery('')
                   setEmail('')
+                  setApiToken('')
                   onChangeEmail()
                 }}
               >
-                Change email
+                Sign out
               </button>
             </div>
 
@@ -350,9 +379,16 @@ export function Landing({
       <div className="felt-glow" aria-hidden />
       <div className="landing-inner">
         <p className="brand">TrueID Point Poker</p>
-        <h1>Sign in with work email</h1>
+        <h1>Sign in with Jira</h1>
+        <p className="lede">
+          Use your work email and an{' '}
+          <a href={JIRA_API_TOKEN_HELP_URL} target="_blank" rel="noreferrer">
+            Atlassian API token
+          </a>
+          . The token is checked once and not stored.
+        </p>
 
-        <form className="entry-form" onSubmit={handleEmailSubmit}>
+        <form className="entry-form" onSubmit={handleLoginSubmit}>
           <label className="field">
             <span>Work email</span>
             <input
@@ -366,6 +402,18 @@ export function Landing({
             />
           </label>
 
+          <label className="field">
+            <span>Jira API token</span>
+            <input
+              type="password"
+              autoComplete="current-password"
+              placeholder="Atlassian API token"
+              value={apiToken}
+              onChange={(e) => setApiToken(e.target.value)}
+              required
+            />
+          </label>
+
           {email && !emailOk ? (
             <p className="form-error">Use @truedigital.com or @muze.co.th only</p>
           ) : null}
@@ -373,8 +421,8 @@ export function Landing({
             <p className="form-error">{error || lookupError}</p>
           ) : null}
 
-          <button className="cta" type="submit" disabled={!emailOk || lookupBusy}>
-            {lookupBusy ? 'Checking boards…' : 'Continue'}
+          <button className="cta" type="submit" disabled={!canSubmitLogin}>
+            {lookupBusy ? 'Signing in…' : 'Sign in'}
           </button>
         </form>
       </div>

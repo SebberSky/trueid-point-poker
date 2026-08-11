@@ -3,9 +3,9 @@ import { Landing } from './Landing'
 import { Room } from './Room'
 import { AdminPage } from './AdminPage'
 import { usePokerSession } from './usePokerSession'
-import { ADMIN_PATH } from './jiraApi'
+import { ADMIN_PATH, logoutSession } from './jiraApi'
 import { appPathname } from './appUrl'
-import { bindIdentity, getSocket } from './socket'
+import { bindIdentity, disconnectSocket, getSocket } from './socket'
 import {
   clearSession,
   getValidSession,
@@ -50,8 +50,10 @@ function PokerApp() {
   const restoredRoomRef = useRef(false)
 
   const expireSession = useCallback(
-    (message = 'Session expired. Sign in with your work email again.') => {
+    (message = 'Session expired. Sign in with your Jira API token again.') => {
       leaveRoom()
+      disconnectSocket()
+      void logoutSession()
       clearSession()
       setSessionEmail('')
       setNickname('')
@@ -173,7 +175,6 @@ function PokerApp() {
       <Room
         room={room}
         playerId={playerId}
-        hostEmail={sessionEmail}
         onRoomUpdate={setRoom}
         onLeave={() => {
           leaveRoom()
@@ -231,6 +232,8 @@ function PokerApp() {
         setName(displayName)
       }}
       onChangeEmail={() => {
+        disconnectSocket()
+        void logoutSession()
         clearSession()
         setSessionEmail('')
         setNickname('')

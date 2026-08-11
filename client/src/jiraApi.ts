@@ -1,4 +1,17 @@
 import { appUrl } from './appUrl'
+
+async function apiFetch(path: string, init: RequestInit = {}): Promise<Response> {
+  const headers = new Headers(init.headers || {})
+  if (init.body && !headers.has('Content-Type')) {
+    headers.set('Content-Type', 'application/json')
+  }
+  return fetch(appUrl(path), {
+    ...init,
+    credentials: 'include',
+    headers,
+  })
+}
+
 export type JiraBoard = {
   id: number
   name: string
@@ -64,59 +77,82 @@ export function isAllowedWorkEmail(email: string) {
   return ALLOWED_EMAIL.test(email.trim())
 }
 
-export async function fetchBoardsForEmail(email: string): Promise<BoardsResponse> {
-  const res = await fetch(appUrl('/api/boards'), {
+export const JIRA_API_TOKEN_HELP_URL =
+  'https://id.atlassian.com/manage-profile/security/api-tokens'
+
+export async function loginWithJiraToken(payload: {
+  email: string
+  apiToken: string
+}): Promise<{ user: JiraUser }> {
+  const res = await apiFetch('/api/auth/login', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email: email.trim().toLowerCase() }),
+    body: JSON.stringify({
+      email: payload.email.trim().toLowerCase(),
+      apiToken: payload.apiToken.trim(),
+    }),
   })
   const data = await res.json()
+  if (!res.ok) throw new Error(data?.error || 'Login failed')
+  return data as { user: JiraUser }
+}
+
+export async function fetchAuthMe(): Promise<{ user: JiraUser } | null> {
+  const res = await apiFetch('/api/auth/me')
+  if (res.status === 401) return null
+  const data = await res.json()
+  if (!res.ok) throw new Error(data?.error || 'Session check failed')
+  return data as { user: JiraUser }
+}
+
+export async function logoutSession(): Promise<void> {
+  try {
+    await apiFetch('/api/auth/logout', { method: 'POST' })
+  } catch {
+    // ignore network errors on logout
+  }
+}
+
+export async function fetchBoardsForSession(): Promise<BoardsResponse> {
+  const res = await apiFetch('/api/boards', {
+    method: 'POST',
+    body: JSON.stringify({}),
+  })
+  const data = await res.json()
+  if (res.status === 401) throw new Error('Sign in required')
   if (!res.ok) throw new Error(data?.error || 'Failed to load boards')
   return data as BoardsResponse
 }
 
 export async function requestRoomAccess(payload: {
   roomId: string
-  email: string
   displayName: string
 }): Promise<AccessResponse> {
-  const res = await fetch(appUrl(`/api/rooms/${encodeURIComponent(payload.roomId)}/access`), {
+  const res = await apiFetch(`/api/rooms/${encodeURIComponent(payload.roomId)}/access`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      email: payload.email.trim().toLowerCase(),
       displayName: payload.displayName.trim(),
     }),
   })
   const data = await res.json()
+  if (res.status === 401) throw new Error('Sign in required')
   if (!res.ok) throw new Error(data?.error || 'Failed to request access')
   return data as AccessResponse
 }
 
-export async function approveRoomMember(payload: {
-  roomId: string
-  hostEmail: string
-  email: string
-}) {
-  const res = await fetch(appUrl(`/api/rooms/${encodeURIComponent(payload.roomId)}/approve`), {
+export async function approveRoomMember(payload: { roomId: string; email: string }) {
+  const res = await apiFetch(`/api/rooms/${encodeURIComponent(payload.roomId)}/approve`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
+    body: JSON.stringify({ email: payload.email }),
   })
   const data = await res.json()
   if (!res.ok) throw new Error(data?.error || 'Approve failed')
   return data
 }
 
-export async function denyRoomMember(payload: {
-  roomId: string
-  hostEmail: string
-  email: string
-}) {
-  const res = await fetch(appUrl(`/api/rooms/${encodeURIComponent(payload.roomId)}/deny`), {
+export async function denyRoomMember(payload: { roomId: string; email: string }) {
+  const res = await apiFetch(`/api/rooms/${encodeURIComponent(payload.roomId)}/deny`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
+    body: JSON.stringify({ email: payload.email }),
   })
   const data = await res.json()
   if (!res.ok) throw new Error(data?.error || 'Deny failed')
@@ -130,7 +166,7 @@ export async function fetchPlanningTickets(
   const qs = roomId
     ? `?roomId=${encodeURIComponent(roomId.trim().toUpperCase())}`
     : ''
-  const res = await fetch(appUrl(`/api/boards/${boardId}/planning${qs}`))
+  const res = await apiFetch(`/api/boards/${boardId}/planning${qs}`)
   const data = await res.json()
   if (!res.ok) throw new Error(data?.error || 'Failed to load tickets')
   return data
@@ -142,7 +178,7 @@ export async function searchIssues(
 ): Promise<{ query: string; issues: import('./types').PlanningIssue[] }> {
   const params = new URLSearchParams({ q: query.trim() })
   if (roomId) params.set('roomId', roomId.trim().toUpperCase())
-  const res = await fetch(appUrl(`/api/issues/search?${params}`))
+  const res = await apiFetch(`/api/issues/search?${params}`)
   const data = await res.json()
   if (!res.ok) throw new Error(data?.error || 'Search failed')
   return data
@@ -152,18 +188,15 @@ export async function setIssueStoryPoints(payload: {
   key: string
   points: number
   roomId: string
-  hostEmail: string
   boardId?: number | null
 }) {
-  const res = await fetch(
-    appUrl(`/api/issues/${encodeURIComponent(payload.key)}/story-points`),
+  const res = await apiFetch(
+    `/api/issues/${encodeURIComponent(payload.key)}/story-points`,
     {
       method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         points: payload.points,
         roomId: payload.roomId,
-        hostEmail: payload.hostEmail,
         boardId: payload.boardId ?? undefined,
       }),
     },

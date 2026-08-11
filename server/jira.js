@@ -124,7 +124,7 @@ export async function fetchAttachmentBinary(
  * @param {string} [roomId]
  */
 function attachmentProxyUrl(id, kind, roomId = '') {
-  const path = `/api/attachments/${id}/${kind}`
+  const path = `/poker/api/attachments/${id}/${kind}`
   const room = String(roomId || '').trim()
   return room ? `${path}?roomId=${encodeURIComponent(room)}` : path
 }
@@ -138,11 +138,11 @@ function rewriteAttachmentUrls(html, base, roomId = '') {
   let out = html
     .replace(
       new RegExp(`${escaped}/rest/api/[23]/attachment/content/(\\d+)`, 'gi'),
-      `/api/attachments/$1/content${qs}`,
+      `/poker/api/attachments/$1/content${qs}`,
     )
     .replace(
       new RegExp(`${escaped}/rest/api/[23]/attachment/thumbnail/(\\d+)`, 'gi'),
-      `/api/attachments/$1/thumbnail${qs}`,
+      `/poker/api/attachments/$1/thumbnail${qs}`,
     )
     .replace(/<script[\s\S]*?>[\s\S]*?<\/script>/gi, '')
     // Jira media/connect stubs that only work inside Jira UI
@@ -893,6 +893,72 @@ export async function setIssueStoryPoints(
       ? `Failed to set story points: ${detail}`
       : 'Failed to set story points',
     status: /** @type {any} */ (lastError)?.status || 502,
+  }
+}
+
+/**
+ * Prove email ownership with the user's own Atlassian API token.
+ * @param {string} email
+ * @param {string} apiToken
+ */
+export async function verifyUserJiraLogin(email, apiToken) {
+  const normalized = String(email || '')
+    .trim()
+    .toLowerCase()
+  const token = String(apiToken || '').trim()
+  if (!isAllowedEmail(normalized)) {
+    return {
+      ok: false,
+      error: 'Email must be @truedigital.com or @muze.co.th',
+      status: 400,
+    }
+  }
+  if (!token) {
+    return { ok: false, error: 'API token is required', status: 400 }
+  }
+
+  /** @type {any} */
+  let me
+  try {
+    me = await jiraFetch('/rest/api/3/myself', {
+      auth: { email: normalized, token },
+    })
+  } catch (err) {
+    const status = /** @type {any} */ (err)?.status
+    if (status === 401 || status === 403) {
+      return { ok: false, error: 'Invalid email or API token', status: 401 }
+    }
+    return {
+      ok: false,
+      error: 'Failed to reach Jira with these credentials',
+      status: 502,
+    }
+  }
+
+  const meEmail = String(me?.emailAddress || '')
+    .trim()
+    .toLowerCase()
+  if (!meEmail) {
+    return {
+      ok: false,
+      error:
+        'Jira did not return an email for this token. Make your email visible on your Atlassian profile, then try again.',
+      status: 400,
+    }
+  }
+  if (meEmail !== normalized) {
+    return {
+      ok: false,
+      error: `Token belongs to ${meEmail}, not ${normalized}`,
+      status: 400,
+    }
+  }
+
+  return {
+    ok: true,
+    displayName: me?.displayName || normalized.split('@')[0],
+    accountId: me?.accountId || null,
+    email: meEmail,
   }
 }
 
