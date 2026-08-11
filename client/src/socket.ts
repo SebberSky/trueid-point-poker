@@ -12,7 +12,8 @@ let socket: Socket | null = null
 export function getSocket(): Socket {
   if (!socket) {
     const options = {
-      autoConnect: true,
+      autoConnect: false,
+      withCredentials: true,
       path: '/poker/socket.io',
       transports: ['websocket', 'polling'] as ('websocket' | 'polling')[],
     }
@@ -21,26 +22,76 @@ export function getSocket(): Socket {
   return socket
 }
 
-export function bindIdentity(email: string): Promise<{ ok?: boolean; error?: string }> {
-  return new Promise((resolve) => {
-    getSocket().emit('identity:bind', { email }, (result: { ok?: boolean; error?: string }) => {
-      resolve(result || { ok: true })
-    })
+export function ensureSocketConnected(): Promise<Socket> {
+  const s = getSocket()
+  if (s.connected) return Promise.resolve(s)
+  return new Promise((resolve, reject) => {
+    const onConnect = () => {
+      cleanup()
+      resolve(s)
+    }
+    const onError = (err: Error) => {
+      cleanup()
+      reject(err)
+    }
+    const cleanup = () => {
+      s.off('connect', onConnect)
+      s.off('connect_error', onError)
+    }
+    s.once('connect', onConnect)
+    s.once('connect_error', onError)
+    s.connect()
   })
+}
+
+export function disconnectSocket() {
+  if (!socket) return
+  socket.disconnect()
+}
+
+export function bindIdentity(_email?: string): Promise<{ ok?: boolean; error?: string }> {
+  return ensureSocketConnected()
+    .then(
+      (s) =>
+        new Promise<{ ok?: boolean; error?: string }>((resolve) => {
+          s.emit('identity:bind', {}, (result: { ok?: boolean; error?: string }) => {
+            resolve(result || { ok: true })
+          })
+        }),
+    )
+    .catch((err) => ({
+      error: err instanceof Error ? err.message : 'Socket connection failed',
+    }))
 }
 
 export function enterRoom(payload: {
   code: string
   name: string
-  email: string
+  email?: string
   boardName?: string
   boardId?: number
 }): Promise<EnterResult> {
-  return new Promise((resolve) => {
-    getSocket().emit('room:enter', payload, (result: EnterResult) => {
-      resolve(result)
-    })
-  })
+  return ensureSocketConnected()
+    .then(
+      (s) =>
+        new Promise<EnterResult>((resolve) => {
+          s.emit(
+            'room:enter',
+            {
+              code: payload.code,
+              name: payload.name,
+              boardName: payload.boardName,
+              boardId: payload.boardId,
+            },
+            (result: EnterResult) => {
+              resolve(result)
+            },
+          )
+        }),
+    )
+    .catch((err) => ({
+      error: err instanceof Error ? err.message : 'Socket connection failed',
+    }))
 }
 
 export function selectTicket(payload: {

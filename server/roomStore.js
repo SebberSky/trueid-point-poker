@@ -1,6 +1,7 @@
-import { mkdirSync, existsSync, readFileSync, writeFileSync, readdirSync } from 'fs'
+import { mkdirSync, existsSync, readFileSync, writeFileSync, readdirSync, chmodSync } from 'fs'
 import { join, dirname } from 'path'
 import { fileURLToPath } from 'url'
+import { decryptSecret, encryptSecret } from './secretStore.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const DATA_DIR = join(__dirname, 'data', 'rooms')
@@ -9,6 +10,19 @@ const DATA_DIR = join(__dirname, 'data', 'rooms')
  * @typedef {{ email: string, displayName: string, role: 'host' | 'member', status: 'approved' | 'pending', updatedAt: string }} RoomMember
  * @typedef {{ email: string, apiToken: string, updatedAt: string }} RoomHost
  */
+
+/**
+ * @param {string} path
+ * @param {unknown} data
+ */
+function writeHostCredFile(path, data) {
+  writeFileSync(path, `${JSON.stringify(data, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 })
+  try {
+    chmodSync(path, 0o600)
+  } catch {
+    // best-effort on platforms that ignore mode
+  }
+}
 
 function ensureDir() {
   mkdirSync(DATA_DIR, { recursive: true })
@@ -184,14 +198,30 @@ export function readRoomHostCreds(roomId) {
     const email = String(data?.email || '')
       .trim()
       .toLowerCase()
-    const apiToken = String(data?.apiToken || '').trim()
-    if (!email || !apiToken) return null
-    return {
-      email,
-      apiToken,
-      updatedAt: String(data?.updatedAt || ''),
+    const updatedAt = String(data?.updatedAt || '')
+    if (!email) return null
+
+    const cipher = String(data?.tokenCipher || '').trim()
+    if (cipher) {
+      const apiToken = decryptSecret(cipher).trim()
+      if (!apiToken) return null
+      return { email, apiToken, updatedAt }
     }
-  } catch {
+
+    const legacy = String(data?.apiToken || '').trim()
+    if (!legacy) return null
+    try {
+      writeHostCredFile(path, {
+        email,
+        tokenCipher: encryptSecret(legacy),
+        updatedAt: updatedAt || new Date().toISOString(),
+      })
+    } catch (err) {
+      console.error('host token migrate-to-keychain failed', roomId, err)
+    }
+    return { email, apiToken: legacy, updatedAt }
+  } catch (err) {
+    console.error('readRoomHostCreds failed', roomId, err)
     return null
   }
 }
@@ -201,9 +231,23 @@ export function readRoomHostCreds(roomId) {
  * @param {string} roomId
  */
 export function getRoomHostPublic(roomId) {
-  const creds = readRoomHostCreds(roomId)
-  if (creds) {
-    return { hostEmail: creds.email, hasApiToken: true }
+  ensureDir()
+  const path = hostCredPath(roomId)
+  if (existsSync(path)) {
+    try {
+      const data = JSON.parse(readFileSync(path, 'utf8'))
+      const email = String(data?.email || '')
+        .trim()
+        .toLowerCase()
+      const hasApiToken = Boolean(
+        String(data?.tokenCipher || '').trim() || String(data?.apiToken || '').trim(),
+      )
+      if (email) {
+        return { hostEmail: email, hasApiToken }
+      }
+    } catch {
+      // fall through to membership CSV
+    }
   }
   const host = readRoomMembers(roomId).find((m) => m.role === 'host')
   return {
@@ -237,13 +281,12 @@ export function setRoomHost(roomId, hostEmail, apiToken) {
   if (!token) throw new Error('Host API token is required')
 
   ensureDir()
-  /** @type {RoomHost} */
-  const creds = {
+  const updatedAt = new Date().toISOString()
+  writeHostCredFile(hostCredPath(roomId), {
     email,
-    apiToken: token,
-    updatedAt: new Date().toISOString(),
-  }
-  writeFileSync(hostCredPath(roomId), `${JSON.stringify(creds, null, 2)}\n`, 'utf8')
+    tokenCipher: encryptSecret(token),
+    updatedAt,
+  })
 
   const members = readRoomMembers(roomId)
   const byEmail = new Map(members.map((m) => [m.email, m]))

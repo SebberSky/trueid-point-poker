@@ -20,13 +20,26 @@ import {
   writeRoomMembers,
   writeRoomSession,
 } from './roomStore.js'
+import {
+  allowLoginAttempt,
+  clearSessionCookie,
+  clientIp,
+  createUserSession,
+  destroyUserSession,
+  parseCookies,
+  sessionCookieOptions,
+  sessionTokenFromRequest,
+  setSessionCookie,
+  touchUserSession,
+  COOKIE_NAME,
+} from './userSession.js'
 
-const PORT = process.env.PORT || 3001
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const clientDist = join(__dirname, '../client/dist')
 
 loadEnvFile(join(__dirname, '.env'), { override: true })
 
+const PORT = process.env.PORT || 3001
 const ADMIN_PATH = (process.env.ADMIN_PATH || 'room-hosts-ctrl').replace(/^\/+/, '')
 const ADMIN_LOGIN_USERNAME = String(
   process.env.ADMIN_LOGIN_USERNAME || process.env.ADMIN_LOGIN_EMAIL || '',
@@ -52,6 +65,7 @@ const {
   listAllBoards,
   defaultJiraAuth,
   verifyHostJiraAccess,
+  verifyUserJiraLogin,
 } = await import('./jira.js')
 
 /**
@@ -75,7 +89,12 @@ function roomIdFromRequest(req) {
 }
 
 const app = express()
-app.use(cors())
+app.use(
+  cors({
+    origin: true,
+    credentials: true,
+  }),
+)
 app.use(express.json({ limit: '64kb' }))
 
 /**
@@ -100,6 +119,67 @@ function requireAdmin(req, res, next) {
     res.status(401).json({ error: 'Admin login required' })
     return
   }
+  next()
+}
+
+/**
+ * @param {import('express').Request} req
+ * @param {import('express').Response} res
+ * @param {import('express').NextFunction} next
+ */
+function requireUser(req, res, next) {
+  const token = sessionTokenFromRequest(req)
+  const session = touchUserSession(token)
+  if (!session) {
+    res.status(401).json({ error: 'Sign in required' })
+    return
+  }
+  req.user = session
+  req.userToken = token
+  next()
+}
+
+/**
+ * @param {import('express').Request} req
+ * @param {import('express').Response} res
+ * @param {import('express').NextFunction} next
+ */
+function requireApprovedRoomMember(req, res, next) {
+  const roomId = normalizeRoomId(roomIdFromRequest(req) || req.params.roomId)
+  if (!roomId) {
+    res.status(400).json({ error: 'roomId is required' })
+    return
+  }
+  const member = getMember(roomId, req.user.email)
+  if (!member || member.status !== 'approved') {
+    res.status(403).json({ error: 'Room access required' })
+    return
+  }
+  req.roomId = roomId
+  req.member = member
+  next()
+}
+
+/**
+ * @param {import('express').Request} req
+ * @param {import('express').Response} res
+ * @param {import('express').NextFunction} next
+ */
+function requireRoomHost(req, res, next) {
+  const roomId = normalizeRoomId(
+    req.params.roomId || roomIdFromRequest(req) || req.body?.roomId,
+  )
+  if (!roomId) {
+    res.status(400).json({ error: 'Invalid room id' })
+    return
+  }
+  const host = getMember(roomId, req.user.email)
+  if (!host || host.role !== 'host' || host.status !== 'approved') {
+    res.status(403).json({ error: 'Hosts only' })
+    return
+  }
+  req.roomId = roomId
+  req.member = host
   next()
 }
 
@@ -138,12 +218,67 @@ app.get('/health', (_req, res) => {
   res.json({ ok: true })
 })
 
-app.post('/api/boards', async (req, res) => {
-  const email = String(req.body?.email || '').trim().toLowerCase()
-  if (!isAllowedEmail(email)) {
-    res.status(400).json({ error: 'Use an @truedigital.com or @muze.co.th email' })
+app.post('/api/auth/login', async (req, res) => {
+  if (!allowLoginAttempt(clientIp(req))) {
+    res.status(429).json({ error: 'Too many login attempts. Try again in a minute.' })
     return
   }
+
+  const email = String(req.body?.email || '')
+    .trim()
+    .toLowerCase()
+  const apiToken = String(req.body?.apiToken || '').trim()
+
+  try {
+    const verified = await verifyUserJiraLogin(email, apiToken)
+    if (!verified.ok) {
+      res.status(verified.status || 401).json({ error: verified.error })
+      return
+    }
+
+    const { token, session } = createUserSession({
+      email: verified.email,
+      displayName: verified.displayName,
+      accountId: verified.accountId,
+    })
+    setSessionCookie(res, sessionCookieOptions(req, token))
+    res.json({
+      user: {
+        email: session.email,
+        emailAddress: session.email,
+        displayName: session.displayName,
+        accountId: session.accountId,
+      },
+    })
+  } catch (err) {
+    console.error('auth login failed', err)
+    res.status(500).json({ error: 'Login failed' })
+  }
+})
+
+app.get('/api/auth/me', requireUser, (req, res) => {
+  res.json({
+    user: {
+      email: req.user.email,
+      emailAddress: req.user.email,
+      displayName: req.user.displayName,
+      accountId: req.user.accountId,
+    },
+  })
+})
+
+app.post('/api/auth/logout', (req, res) => {
+  const token = sessionTokenFromRequest(req)
+  destroyUserSession(token)
+  const secure =
+    process.env.COOKIE_SECURE === 'true' ||
+    String(req.headers['x-forwarded-proto'] || '').toLowerCase() === 'https'
+  clearSessionCookie(res, secure)
+  res.json({ ok: true })
+})
+
+app.post('/api/boards', requireUser, async (req, res) => {
+  const email = req.user.email
 
   try {
     const result = await boardsForEmail(email)
@@ -164,9 +299,13 @@ app.post('/api/boards', async (req, res) => {
   }
 })
 
-app.get('/api/boards/:boardId/planning', async (req, res) => {
+app.get(
+  '/api/boards/:boardId/planning',
+  requireUser,
+  requireApprovedRoomMember,
+  async (req, res) => {
   try {
-    const roomId = roomIdFromRequest(req)
+    const roomId = req.roomId
     const auth = resolveJiraAuth(roomId)
     const result = await getBoardPlanningTickets(req.params.boardId, auth)
     if (result.error) {
@@ -180,9 +319,13 @@ app.get('/api/boards/:boardId/planning', async (req, res) => {
   }
 })
 
-app.get('/api/attachments/:id/content', async (req, res) => {
+app.get(
+  '/api/attachments/:id/content',
+  requireUser,
+  requireApprovedRoomMember,
+  async (req, res) => {
   try {
-    const auth = resolveJiraAuth(roomIdFromRequest(req))
+    const auth = resolveJiraAuth(req.roomId)
     const result = await fetchAttachmentBinary(req.params.id, 'content', auth)
     if (result.error) {
       res.status(result.status || 400).json({ error: result.error })
@@ -197,9 +340,13 @@ app.get('/api/attachments/:id/content', async (req, res) => {
   }
 })
 
-app.get('/api/attachments/:id/thumbnail', async (req, res) => {
+app.get(
+  '/api/attachments/:id/thumbnail',
+  requireUser,
+  requireApprovedRoomMember,
+  async (req, res) => {
   try {
-    const auth = resolveJiraAuth(roomIdFromRequest(req))
+    const auth = resolveJiraAuth(req.roomId)
     const result = await fetchAttachmentBinary(req.params.id, 'thumbnail', auth)
     if (result.error) {
       const fallback = await fetchAttachmentBinary(req.params.id, 'content', auth)
@@ -221,9 +368,13 @@ app.get('/api/attachments/:id/thumbnail', async (req, res) => {
   }
 })
 
-app.get('/api/issues/search', async (req, res) => {
+app.get(
+  '/api/issues/search',
+  requireUser,
+  requireApprovedRoomMember,
+  async (req, res) => {
   try {
-    const auth = resolveJiraAuth(roomIdFromRequest(req))
+    const auth = resolveJiraAuth(req.roomId)
     const result = await searchIssues(String(req.query.q || ''), auth)
     if (result.error) {
       res.status(result.status || 400).json({ error: result.error })
@@ -236,9 +387,13 @@ app.get('/api/issues/search', async (req, res) => {
   }
 })
 
-app.get('/api/issues/:key', async (req, res) => {
+app.get(
+  '/api/issues/:key',
+  requireUser,
+  requireApprovedRoomMember,
+  async (req, res) => {
   try {
-    const roomId = roomIdFromRequest(req)
+    const roomId = req.roomId
     const auth = resolveJiraAuth(roomId)
     const result = await getIssueDetails(req.params.key, auth, roomId)
     if (result.error) {
@@ -255,16 +410,13 @@ app.get('/api/issues/:key', async (req, res) => {
   }
 })
 
-app.put('/api/issues/:key/story-points', async (req, res) => {
-  const roomId = normalizeRoomId(req.body?.roomId)
-  const hostEmail = String(req.body?.hostEmail || '')
-    .trim()
-    .toLowerCase()
-  const host = getMember(roomId, hostEmail)
-  if (!host || host.role !== 'host' || host.status !== 'approved') {
-    res.status(403).json({ error: 'Hosts only' })
-    return
-  }
+app.put(
+  '/api/issues/:key/story-points',
+  requireUser,
+  requireRoomHost,
+  async (req, res) => {
+  const roomId = req.roomId
+  const hostEmail = req.user.email
 
   const roomHostAuth = getRoomHostAuth(roomId)
   if (roomHostAuth && roomHostAuth.email !== hostEmail) {
@@ -294,21 +446,15 @@ app.put('/api/issues/:key/story-points', async (req, res) => {
   }
 })
 
-app.post('/api/rooms/:roomId/access', async (req, res) => {
+app.post('/api/rooms/:roomId/access', requireUser, async (req, res) => {
   const roomId = normalizeRoomId(req.params.roomId)
-  const email = String(req.body?.email || '')
-    .trim()
-    .toLowerCase()
-  const displayName = String(req.body?.displayName || '')
+  const email = req.user.email
+  const displayName = String(req.body?.displayName || req.user.displayName || '')
     .trim()
     .slice(0, 80)
 
   if (!roomId) {
     res.status(400).json({ error: 'Invalid room id' })
-    return
-  }
-  if (!isAllowedEmail(email)) {
-    res.status(400).json({ error: 'Use an @truedigital.com or @muze.co.th email' })
     return
   }
   if (!displayName) {
@@ -344,8 +490,11 @@ app.post('/api/rooms/:roomId/access', async (req, res) => {
       return
     }
 
-    const user = await findJiraUserByEmail(email)
-    if (!user) {
+    const accountId = req.user.accountId
+    const user = accountId
+      ? { accountId, email, displayName: req.user.displayName }
+      : await findJiraUserByEmail(email)
+    if (!user?.accountId) {
       res.status(404).json({ error: 'No Jira user found for this email' })
       return
     }
@@ -379,11 +528,9 @@ app.post('/api/rooms/:roomId/access', async (req, res) => {
   }
 })
 
-app.get('/api/rooms/:roomId/me', (req, res) => {
+app.get('/api/rooms/:roomId/me', requireUser, (req, res) => {
   const roomId = normalizeRoomId(req.params.roomId)
-  const email = String(req.query.email || '')
-    .trim()
-    .toLowerCase()
+  const email = req.user.email
   const member = getMember(roomId, email)
   if (!member) {
     res.status(404).json({ error: 'Not found' })
@@ -392,20 +539,11 @@ app.get('/api/rooms/:roomId/me', (req, res) => {
   res.json({ member, pending: member.role === 'host' ? pendingList(roomId) : [] })
 })
 
-app.post('/api/rooms/:roomId/approve', (req, res) => {
-  const roomId = normalizeRoomId(req.params.roomId)
-  const hostEmail = String(req.body?.hostEmail || '')
-    .trim()
-    .toLowerCase()
+app.post('/api/rooms/:roomId/approve', requireUser, requireRoomHost, (req, res) => {
+  const roomId = req.roomId
   const targetEmail = String(req.body?.email || '')
     .trim()
     .toLowerCase()
-
-  const host = getMember(roomId, hostEmail)
-  if (!host || host.role !== 'host' || host.status !== 'approved') {
-    res.status(403).json({ error: 'Hosts only' })
-    return
-  }
 
   const target = getMember(roomId, targetEmail)
   if (!target) {
@@ -427,20 +565,11 @@ app.post('/api/rooms/:roomId/approve', (req, res) => {
   res.json({ member, pending: pendingList(roomId) })
 })
 
-app.post('/api/rooms/:roomId/deny', (req, res) => {
-  const roomId = normalizeRoomId(req.params.roomId)
-  const hostEmail = String(req.body?.hostEmail || '')
-    .trim()
-    .toLowerCase()
+app.post('/api/rooms/:roomId/deny', requireUser, requireRoomHost, (req, res) => {
+  const roomId = req.roomId
   const targetEmail = String(req.body?.email || '')
     .trim()
     .toLowerCase()
-
-  const host = getMember(roomId, hostEmail)
-  if (!host || host.role !== 'host' || host.status !== 'approved') {
-    res.status(403).json({ error: 'Hosts only' })
-    return
-  }
 
   const members = readRoomMembers(roomId).filter((m) => m.email !== targetEmail)
   writeRoomMembers(roomId, members)
@@ -612,7 +741,24 @@ app.use(express.static(clientDist))
 
 const httpServer = createServer(app)
 const io = new Server(httpServer, {
-  cors: { origin: true, methods: ['GET', 'POST'] },
+  cors: { origin: true, methods: ['GET', 'POST'], credentials: true },
+})
+
+io.use((socket, next) => {
+  const cookies = parseCookies(socket.handshake.headers.cookie)
+  const token =
+    String(socket.handshake.auth?.token || '').trim() ||
+    cookies[COOKIE_NAME] ||
+    ''
+  const session = touchUserSession(token)
+  if (!session) {
+    next(new Error('Sign in required'))
+    return
+  }
+  socket.data.userToken = token
+  socket.data.email = session.email
+  socket.data.displayName = session.displayName
+  next()
 })
 
 /**
@@ -759,23 +905,29 @@ function normalizeRoomId(value) {
 }
 
 io.on('connection', (socket) => {
-  socket.on('identity:bind', ({ email }, callback) => {
-    const normalized = String(email || '')
+  const boundEmail = String(socket.data.email || '')
+    .trim()
+    .toLowerCase()
+  if (boundEmail) {
+    socketsByEmail.set(boundEmail, socket)
+  }
+
+  socket.on('identity:bind', (_payload, callback) => {
+    const normalized = String(socket.data.email || '')
       .trim()
       .toLowerCase()
-    if (!isAllowedEmail(normalized)) {
-      callback?.({ error: 'Invalid email' })
+    if (!normalized) {
+      callback?.({ error: 'Sign in required' })
       return
     }
-    socket.data.email = normalized
     socketsByEmail.set(normalized, socket)
-    callback?.({ ok: true })
+    callback?.({ ok: true, email: normalized })
   })
 
-  socket.on('room:enter', ({ code, name, email, boardName, boardId }, callback) => {
+  socket.on('room:enter', ({ code, name, boardName, boardId }, callback) => {
     const roomId = normalizeRoomId(code)
     const trimmedName = typeof name === 'string' ? name.trim().slice(0, 80) : ''
-    const normalizedEmail = String(email || '')
+    const normalizedEmail = String(socket.data.email || '')
       .trim()
       .toLowerCase()
     const parsedBoardId = Number(boardId)
@@ -788,8 +940,8 @@ io.on('connection', (socket) => {
       callback?.({ error: 'Name is required' })
       return
     }
-    if (!isAllowedEmail(normalizedEmail)) {
-      callback?.({ error: 'Invalid email' })
+    if (!normalizedEmail) {
+      callback?.({ error: 'Sign in required' })
       return
     }
 
