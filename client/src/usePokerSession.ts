@@ -5,6 +5,7 @@ import {
   getSocket,
   leaveRoomSocket,
 } from './socket'
+import { readSession, setSessionRoom } from './session'
 import type { RoomState } from './types'
 
 const NAME_KEY = 'trueid-poker-name'
@@ -19,9 +20,27 @@ export function usePokerSession() {
   useEffect(() => {
     const socket = getSocket()
     const onUpdate = (next: RoomState) => setRoom(next)
+    const onClosed = (payload: { roomId?: string; reason?: string }) => {
+      const closedId = payload.roomId ? String(payload.roomId).toUpperCase() : ''
+      const savedRoomId = readSession()?.room?.roomId
+      setRoom((current) => {
+        if (!current) return current
+        if (closedId && closedId !== current.code) return current
+        return null
+      })
+      if (closedId && savedRoomId && closedId !== savedRoomId) return
+      setSessionRoom(null)
+      setPlayerId(null)
+      const url = new URL(window.location.href)
+      url.searchParams.delete('room')
+      window.history.replaceState({}, '', url)
+      setError(payload.reason || 'Host went offline. Room closed.')
+    }
     socket.on('room:update', onUpdate)
+    socket.on('room:closed', onClosed)
     return () => {
       socket.off('room:update', onUpdate)
+      socket.off('room:closed', onClosed)
     }
   }, [])
 

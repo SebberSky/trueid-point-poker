@@ -908,6 +908,76 @@ function notifyUser(email, event, payload) {
   if (socket) socket.emit(event, payload)
 }
 
+const HOST_OFFLINE_GRACE_MS = 15_000
+
+/** @type {Map<string, ReturnType<typeof setTimeout>>} */
+const hostOfflineTimers = new Map()
+
+/**
+ * @param {Room} room
+ */
+function roomHasOnlineHost(room) {
+  for (const player of room.players.values()) {
+    if (player.isHost) return true
+  }
+  return false
+}
+
+/**
+ * @param {string} roomId
+ */
+function clearHostOfflineTimer(roomId) {
+  const timer = hostOfflineTimers.get(roomId)
+  if (timer) {
+    clearTimeout(timer)
+    hostOfflineTimers.delete(roomId)
+  }
+}
+
+/**
+ * @param {string} roomId
+ * @param {string} reason
+ */
+function closeRoom(roomId, reason) {
+  clearHostOfflineTimer(roomId)
+  const room = rooms.get(roomId)
+  if (!room) return
+
+  io.to(roomId).emit('room:closed', { roomId, reason })
+  for (const socketId of room.players.keys()) {
+    const memberSocket = io.sockets.sockets.get(socketId)
+    if (memberSocket) {
+      memberSocket.leave(roomId)
+      memberSocket.data.roomCode = null
+    }
+  }
+  writeRoomSession(roomId, { revealed: false })
+  rooms.delete(roomId)
+}
+
+/**
+ * @param {string} roomId
+ */
+function scheduleCloseIfHostOffline(roomId) {
+  const room = rooms.get(roomId)
+  if (!room) {
+    clearHostOfflineTimer(roomId)
+    return
+  }
+  if (roomHasOnlineHost(room)) {
+    clearHostOfflineTimer(roomId)
+    return
+  }
+  if (hostOfflineTimers.has(roomId)) return
+  const timer = setTimeout(() => {
+    hostOfflineTimers.delete(roomId)
+    const live = rooms.get(roomId)
+    if (!live || roomHasOnlineHost(live)) return
+    closeRoom(roomId, 'Host went offline')
+  }, HOST_OFFLINE_GRACE_MS)
+  hostOfflineTimers.set(roomId, timer)
+}
+
 /**
  * @param {import('socket.io').Socket} socket
  * @param {string} code
@@ -921,12 +991,14 @@ function leaveCurrentRoom(socket, code) {
   socket.data.roomCode = null
 
   if (room.players.size === 0) {
+    clearHostOfflineTimer(code)
     writeRoomSession(code, { revealed: false })
     rooms.delete(code)
     return
   }
 
   emitRoom(code)
+  scheduleCloseIfHostOffline(code)
 }
 
 /**
@@ -986,11 +1058,20 @@ io.on('connection', (socket) => {
       return
     }
 
+    const isHost = member.role === 'host'
+    let room = rooms.get(roomId)
+    if (!isHost && (!room || !roomHasOnlineHost(room))) {
+      callback?.({
+        error: 'Host is offline. Wait for the host to open the room.',
+        hostOffline: true,
+      })
+      return
+    }
+
     if (socket.data.roomCode && socket.data.roomCode !== roomId) {
       leaveCurrentRoom(socket, socket.data.roomCode)
     }
 
-    let room = rooms.get(roomId)
     if (!room) {
       const saved = readRoomSession(roomId)
       room = {
@@ -1011,7 +1092,6 @@ io.on('connection', (socket) => {
       if (Number.isFinite(parsedBoardId)) room.boardId = parsedBoardId
     }
 
-    const isHost = member.role === 'host'
     room.players.set(socket.id, {
       id: socket.id,
       email: normalizedEmail,
@@ -1031,6 +1111,8 @@ io.on('connection', (socket) => {
       role: isHost ? 'host' : 'member',
       status: 'approved',
     })
+
+    if (isHost) clearHostOfflineTimer(roomId)
 
     callback?.({ room: publicRoomState(room), playerId: socket.id })
     emitRoom(roomId)
