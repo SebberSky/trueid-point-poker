@@ -1,10 +1,9 @@
-import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
+  atlassianLoginUrl,
   fetchAuthMe,
+  fetchAuthProviders,
   fetchBoardsForSession,
-  isAllowedWorkEmail,
-  JIRA_API_TOKEN_HELP_URL,
-  loginWithJiraToken,
   requestRoomAccess,
   type BoardsResponse,
   type JiraBoard,
@@ -43,12 +42,22 @@ function loadSavedNickname(email: string): string | null {
   return null
 }
 
+function readAuthErrorFromUrl(): string | null {
+  const params = new URLSearchParams(window.location.search)
+  const message = params.get('auth_error')
+  if (!message) return null
+  params.delete('auth_error')
+  const next = params.toString()
+  const url = `${window.location.pathname}${next ? `?${next}` : ''}${window.location.hash}`
+  window.history.replaceState({}, '', url)
+  return message
+}
+
 export function Landing({
   busy,
   error,
   pendingRoom,
   nickname,
-  restoreEmail = '',
   onNicknameChange,
   onEnterRoom,
   onPending,
@@ -56,10 +65,10 @@ export function Landing({
   onSessionStart,
   onChangeEmail,
 }: LandingProps) {
-  const [email, setEmail] = useState(restoreEmail)
-  const [apiToken, setApiToken] = useState('')
+  const [email, setEmail] = useState('')
   const [lookupBusy, setLookupBusy] = useState(false)
-  const [lookupError, setLookupError] = useState<string | null>(null)
+  const [lookupError, setLookupError] = useState<string | null>(() => readAuthErrorFromUrl())
+  const [oauthReady, setOauthReady] = useState<boolean | null>(null)
   const [result, setResult] = useState<BoardsResponse | null>(null)
   const [boardQuery, setBoardQuery] = useState('')
   const [editingName, setEditingName] = useState(false)
@@ -67,10 +76,6 @@ export function Landing({
   const [enteringId, setEnteringId] = useState<number | null>(null)
   const [isCustomNickname, setIsCustomNickname] = useState(false)
   const restoredLookupRef = useRef(false)
-
-  const emailOk = useMemo(() => isAllowedWorkEmail(email), [email])
-  const tokenOk = apiToken.trim().length > 0
-  const canSubmitLogin = emailOk && tokenOk && !lookupBusy
 
   const visibleBoards = useMemo(() => {
     if (!result) return []
@@ -105,7 +110,6 @@ export function Landing({
     })
     setResult(data)
     setEmail(data.user.emailAddress)
-    setApiToken('')
     setEditingName(false)
   }
 
@@ -125,24 +129,11 @@ export function Landing({
     }
   }
 
-  async function handleLoginSubmit(event: FormEvent) {
-    event.preventDefault()
-    if (!canSubmitLogin) return
-    setLookupBusy(true)
-    setLookupError(null)
-    setBoardQuery('')
-    onClearError()
-    try {
-      await loginWithJiraToken({ email, apiToken })
-      const data = await fetchBoardsForSession()
-      applyBoards(data)
-    } catch (err) {
-      setResult(null)
-      setLookupError(err instanceof Error ? err.message : 'Login failed')
-    } finally {
-      setLookupBusy(false)
-    }
-  }
+  useEffect(() => {
+    void fetchAuthProviders()
+      .then((providers) => setOauthReady(providers.atlassian))
+      .catch(() => setOauthReady(false))
+  }, [])
 
   useEffect(() => {
     if (restoredLookupRef.current) return
@@ -155,7 +146,7 @@ export function Landing({
         setEmail(me.user.emailAddress)
         await loadBoardsForSession()
       } catch {
-        // no server session — show login form
+        // no server session — show login
       }
     })()
   }, [pendingRoom])
@@ -280,6 +271,12 @@ export function Landing({
                 <div className="name-display">
                   <span>
                     Playing as <strong>{nickname}</strong>
+                    {email ? (
+                      <>
+                        {' '}
+                        <em className="field-hint">({email})</em>
+                      </>
+                    ) : null}
                   </span>
                   <button
                     type="button"
@@ -312,7 +309,6 @@ export function Landing({
                   setResult(null)
                   setBoardQuery('')
                   setEmail('')
-                  setApiToken('')
                   onChangeEmail()
                 }}
               >
@@ -379,52 +375,35 @@ export function Landing({
       <div className="felt-glow" aria-hidden />
       <div className="landing-inner">
         <p className="brand">TrueID Point Poker</p>
-        <h1>Sign in with Jira</h1>
+        <h1>Sign in with Atlassian</h1>
         <p className="lede">
-          Use your work email and an{' '}
-          <a href={JIRA_API_TOKEN_HELP_URL} target="_blank" rel="noreferrer">
-            Atlassian API token
-          </a>
-          . The token is checked once and not stored.
+          Continue with your TrueDigital / Muze Atlassian account. Works for hosts and players.
         </p>
 
-        <form className="entry-form" onSubmit={handleLoginSubmit}>
-          <label className="field">
-            <span>Work email</span>
-            <input
-              type="email"
-              autoComplete="email"
-              inputMode="email"
-              placeholder="name@truedigital.com"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              required
-            />
-          </label>
-
-          <label className="field">
-            <span>Jira API token</span>
-            <input
-              type="password"
-              autoComplete="current-password"
-              placeholder="Atlassian API token"
-              value={apiToken}
-              onChange={(e) => setApiToken(e.target.value)}
-              required
-            />
-          </label>
-
-          {email && !emailOk ? (
-            <p className="form-error">Use @truedigital.com or @muze.co.th only</p>
-          ) : null}
+        <div className="entry-form">
           {error || lookupError ? (
             <p className="form-error">{error || lookupError}</p>
           ) : null}
+          {oauthReady === false ? (
+            <p className="form-error">
+              Atlassian login is not configured on the server yet. Ask an admin to set
+              ATLASSIAN_CLIENT_ID / SECRET / REDIRECT_URI.
+            </p>
+          ) : null}
 
-          <button className="cta" type="submit" disabled={!canSubmitLogin}>
-            {lookupBusy ? 'Signing in…' : 'Sign in'}
-          </button>
-        </form>
+          <a
+            className="cta atlassian-login"
+            href={atlassianLoginUrl()}
+            aria-disabled={oauthReady === false || lookupBusy}
+            onClick={(event) => {
+              if (oauthReady === false || lookupBusy) {
+                event.preventDefault()
+              }
+            }}
+          >
+            {lookupBusy ? 'Checking session…' : 'Continue with Atlassian'}
+          </a>
+        </div>
       </div>
     </div>
   )

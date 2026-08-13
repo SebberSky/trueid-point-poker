@@ -744,6 +744,20 @@
   transition: transform 0.18s ease, filter 0.18s ease;
 }
 
+a.cta {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  text-decoration: none;
+  box-sizing: border-box;
+  width: 100%;
+}
+
+a.cta[aria-disabled='true'] {
+  opacity: 0.55;
+  pointer-events: none;
+}
+
 .cta:hover:not(:disabled) {
   transform: translateY(-1px);
   filter: brightness(1.05);

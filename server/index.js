@@ -33,6 +33,11 @@ import {
   touchUserSession,
   COOKIE_NAME,
 } from './userSession.js'
+import {
+  atlassianOAuthConfigured,
+  beginAtlassianOAuth,
+  completeAtlassianOAuth,
+} from './atlassianOAuth.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const clientDist = join(__dirname, '../client/dist')
@@ -218,7 +223,37 @@ app.get('/health', (_req, res) => {
   res.json({ ok: true })
 })
 
+app.get('/api/auth/atlassian', (req, res) => {
+  if (!allowLoginAttempt(clientIp(req))) {
+    res.status(429).json({ error: 'Too many login attempts. Try again in a minute.' })
+    return
+  }
+  beginAtlassianOAuth(req, res)
+})
+
+app.get('/api/auth/atlassian/callback', async (req, res) => {
+  await completeAtlassianOAuth(req, res, (profile) => {
+    const { token } = createUserSession({
+      email: profile.email,
+      displayName: profile.displayName,
+      accountId: profile.accountId,
+    })
+    setSessionCookie(res, sessionCookieOptions(req, token))
+  })
+})
+
+app.get('/api/auth/providers', (_req, res) => {
+  res.json({
+    atlassian: atlassianOAuthConfigured(),
+    apiTokenLogin: process.env.ALLOW_API_TOKEN_LOGIN === 'true',
+  })
+})
+
 app.post('/api/auth/login', async (req, res) => {
+  if (process.env.ALLOW_API_TOKEN_LOGIN !== 'true') {
+    res.status(404).json({ error: 'Use Login with Atlassian' })
+    return
+  }
   if (!allowLoginAttempt(clientIp(req))) {
     res.status(429).json({ error: 'Too many login attempts. Try again in a minute.' })
     return

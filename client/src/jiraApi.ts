@@ -77,23 +77,23 @@ export function isAllowedWorkEmail(email: string) {
   return ALLOWED_EMAIL.test(email.trim())
 }
 
-export const JIRA_API_TOKEN_HELP_URL =
-  'https://id.atlassian.com/manage-profile/security/api-tokens'
+export function atlassianLoginUrl() {
+  return appUrl('/api/auth/atlassian')
+}
 
-export async function loginWithJiraToken(payload: {
-  email: string
-  apiToken: string
-}): Promise<{ user: JiraUser }> {
-  const res = await apiFetch('/api/auth/login', {
-    method: 'POST',
-    body: JSON.stringify({
-      email: payload.email.trim().toLowerCase(),
-      apiToken: payload.apiToken.trim(),
-    }),
-  })
-  const data = await res.json()
-  if (!res.ok) throw new Error(data?.error || 'Login failed')
-  return data as { user: JiraUser }
+export async function fetchAuthProviders(): Promise<{
+  atlassian: boolean
+  apiTokenLogin: boolean
+}> {
+  const res = await apiFetch('/api/auth/providers')
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) {
+    return { atlassian: false, apiTokenLogin: false }
+  }
+  return {
+    atlassian: Boolean(data?.atlassian),
+    apiTokenLogin: Boolean(data?.apiTokenLogin),
+  }
 }
 
 export async function fetchAuthMe(): Promise<{ user: JiraUser } | null> {
