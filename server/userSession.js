@@ -1,7 +1,8 @@
 import { randomBytes } from 'crypto'
 
 const COOKIE_NAME = 'tipp_session'
-const SESSION_MS = 8 * 60 * 60 * 1000
+/** Persist login across browser restarts (no idle expiry). */
+const COOKIE_MAX_AGE_MS = 6 * 60 * 60 * 1000
 const LOGIN_WINDOW_MS = 60_000
 const LOGIN_MAX_ATTEMPTS = 20
 
@@ -10,7 +11,6 @@ const LOGIN_MAX_ATTEMPTS = 20
  *   email: string,
  *   displayName: string,
  *   accountId: string | null,
- *   expiresAt: number,
  * }} UserSession
  */
 
@@ -84,24 +84,14 @@ export function sessionTokenFromRequest(req) {
  */
 export function getUserSession(token) {
   if (!token) return null
-  const session = sessions.get(token)
-  if (!session) return null
-  if (Date.now() > session.expiresAt) {
-    sessions.delete(token)
-    return null
-  }
-  return session
+  return sessions.get(token) || null
 }
 
 /**
  * @param {string} token
  */
 export function touchUserSession(token) {
-  const session = getUserSession(token)
-  if (!session) return null
-  session.expiresAt = Date.now() + SESSION_MS
-  sessions.set(token, session)
-  return session
+  return getUserSession(token)
 }
 
 /**
@@ -116,7 +106,6 @@ export function createUserSession(user) {
       .toLowerCase(),
     displayName: String(user.displayName || '').trim() || 'Player',
     accountId: user.accountId || null,
-    expiresAt: Date.now() + SESSION_MS,
   }
   sessions.set(token, session)
   return { token, session }
@@ -140,7 +129,7 @@ export function sessionCookieOptions(req, token) {
   return {
     name: COOKIE_NAME,
     value: token,
-    maxAgeMs: SESSION_MS,
+    maxAgeMs: COOKIE_MAX_AGE_MS,
     secure,
   }
 }
@@ -177,4 +166,4 @@ export function clearSessionCookie(res, secure = false) {
   res.append('Set-Cookie', parts.join('; '))
 }
 
-export { COOKIE_NAME, SESSION_MS }
+export { COOKIE_NAME }

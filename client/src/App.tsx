@@ -49,58 +49,17 @@ function PokerApp() {
   const [rejoining, setRejoining] = useState(() => Boolean(initial?.room))
   const restoredRoomRef = useRef(false)
 
-  const expireSession = useCallback(
-    (message = 'Session expired. Sign in with your Jira API token again.') => {
-      leaveRoom()
-      disconnectSocket()
-      void logoutSession()
-      clearSession()
-      setSessionEmail('')
-      setNickname('')
-      setName('')
-      setPendingRoom(null)
-      setError(message)
-      setSessionEpoch((n) => n + 1)
-    },
-    [leaveRoom, setError, setName],
-  )
-
-  const refreshSession = useCallback(() => {
-    if (!readSession()) return true
-    const next = touchSession()
-    if (!next) {
-      expireSession()
-      return false
-    }
-    return true
-  }, [expireSession])
-
-  useEffect(() => {
-    const onActivity = () => {
-      refreshSession()
-    }
-    const events: Array<keyof DocumentEventMap> = [
-      'pointerdown',
-      'keydown',
-      'touchstart',
-      'click',
-    ]
-    for (const event of events) {
-      document.addEventListener(event, onActivity, { passive: true })
-    }
-    const timer = window.setInterval(() => {
-      const session = getValidSession()
-      if (!session && (sessionEmail || room)) {
-        expireSession()
-      }
-    }, 15_000)
-    return () => {
-      for (const event of events) {
-        document.removeEventListener(event, onActivity)
-      }
-      window.clearInterval(timer)
-    }
-  }, [expireSession, refreshSession, room, sessionEmail])
+  const signOut = useCallback(() => {
+    leaveRoom()
+    disconnectSocket()
+    void logoutSession()
+    clearSession()
+    setSessionEmail('')
+    setNickname('')
+    setName('')
+    setPendingRoom(null)
+    setSessionEpoch((n) => n + 1)
+  }, [leaveRoom, setName])
 
   useEffect(() => {
     if (restoredRoomRef.current) return
@@ -130,12 +89,10 @@ function PokerApp() {
 
   useEffect(() => {
     if (!pendingRoom || !sessionEmail) return
-    if (!refreshSession()) return
     const socket = getSocket()
     bindIdentity(sessionEmail)
     const onApproved = async (payload: { roomId?: string }) => {
       if (payload.roomId && payload.roomId !== pendingRoom.roomId) return
-      if (!refreshSession()) return
       const ok = await handleEnter({
         code: pendingRoom.roomId,
         displayName: nickname,
@@ -161,14 +118,7 @@ function PokerApp() {
       socket.off('access:approved', onApproved)
       socket.off('access:denied', onDenied)
     }
-  }, [
-    pendingRoom,
-    sessionEmail,
-    nickname,
-    handleEnter,
-    setError,
-    refreshSession,
-  ])
+  }, [pendingRoom, sessionEmail, nickname, handleEnter, setError])
 
   if (room && playerId) {
     return (
@@ -232,18 +182,10 @@ function PokerApp() {
         setName(displayName)
       }}
       onChangeEmail={() => {
-        disconnectSocket()
-        void logoutSession()
-        clearSession()
-        setSessionEmail('')
-        setNickname('')
-        setName('')
-        setPendingRoom(null)
+        signOut()
         setError(null)
-        setSessionEpoch((n) => n + 1)
       }}
       onPending={({ roomId, boardName, email }) => {
-        if (!refreshSession()) return
         setSessionEmail(email)
         writeSession({
           email,
