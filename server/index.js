@@ -65,8 +65,12 @@ const {
   getBoardPlanningTickets,
   getIssueDetails,
   searchIssues,
+  searchIssuesBySummary,
   fetchAttachmentBinary,
   setIssueStoryPoints,
+  setIssueNeedQa,
+  setIssuePlatforms,
+  setIssueFixVersions,
   listAllBoards,
   defaultJiraAuth,
   verifyHostJiraAccess,
@@ -422,6 +426,30 @@ app.get(
   }
 })
 
+app.post(
+  '/api/issues/same-summary',
+  requireUser,
+  requireRoomHost,
+  async (req, res) => {
+    try {
+      const auth = resolveJiraAuth(req.roomId)
+      const result = await searchIssuesBySummary(
+        String(req.body?.summary || ''),
+        String(req.body?.excludeKey || req.body?.includeKey || ''),
+        auth,
+      )
+      if (result.error) {
+        res.status(result.status || 400).json({ error: result.error })
+        return
+      }
+      res.json(result)
+    } catch (err) {
+      console.error('same-summary search failed', err)
+      res.status(500).json({ error: 'Failed to find matching tickets' })
+    }
+  },
+)
+
 app.get(
   '/api/issues/:key',
   requireUser,
@@ -442,6 +470,107 @@ app.get(
     res.status(status).json({
       error: status === 404 ? 'Issue not found' : 'Failed to load issue',
     })
+  }
+})
+
+app.put(
+  '/api/issues/:key/need-qa',
+  requireUser,
+  requireRoomHost,
+  async (req, res) => {
+  const roomId = req.roomId
+  const hostEmail = req.user.email
+
+  const roomHostAuth = getRoomHostAuth(roomId)
+  if (roomHostAuth && roomHostAuth.email !== hostEmail) {
+    res.status(400).json({
+      error: 'Room host API token is not configured for this host',
+    })
+    return
+  }
+
+  const auth = roomHostAuth || resolveJiraAuth(roomId)
+
+  try {
+    const result = await setIssueNeedQa(req.params.key, req.body?.needQa, auth)
+    if (result.error) {
+      res.status(result.status || 400).json({ error: result.error })
+      return
+    }
+    res.json(result)
+  } catch (err) {
+    console.error('set need qa failed', err)
+    res.status(500).json({ error: 'Failed to set Need QA' })
+  }
+})
+
+app.put(
+  '/api/issues/:key/platforms',
+  requireUser,
+  requireRoomHost,
+  async (req, res) => {
+  const roomId = req.roomId
+  const hostEmail = req.user.email
+
+  const roomHostAuth = getRoomHostAuth(roomId)
+  if (roomHostAuth && roomHostAuth.email !== hostEmail) {
+    res.status(400).json({
+      error: 'Room host API token is not configured for this host',
+    })
+    return
+  }
+
+  const auth = roomHostAuth || resolveJiraAuth(roomId)
+
+  try {
+    const result = await setIssuePlatforms(
+      req.params.key,
+      req.body?.platforms,
+      auth,
+    )
+    if (result.error) {
+      res.status(result.status || 400).json({ error: result.error })
+      return
+    }
+    res.json(result)
+  } catch (err) {
+    console.error('set platforms failed', err)
+    res.status(500).json({ error: 'Failed to set Platform' })
+  }
+})
+
+app.put(
+  '/api/issues/:key/fix-versions',
+  requireUser,
+  requireRoomHost,
+  async (req, res) => {
+  const roomId = req.roomId
+  const hostEmail = req.user.email
+
+  const roomHostAuth = getRoomHostAuth(roomId)
+  if (roomHostAuth && roomHostAuth.email !== hostEmail) {
+    res.status(400).json({
+      error: 'Room host API token is not configured for this host',
+    })
+    return
+  }
+
+  const auth = roomHostAuth || resolveJiraAuth(roomId)
+
+  try {
+    const result = await setIssueFixVersions(
+      req.params.key,
+      req.body?.fixVersions,
+      auth,
+    )
+    if (result.error) {
+      res.status(result.status || 400).json({ error: result.error })
+      return
+    }
+    res.json(result)
+  } catch (err) {
+    console.error('set fix versions failed', err)
+    res.status(500).json({ error: 'Failed to set Fix version' })
   }
 })
 
@@ -855,8 +984,25 @@ function publicRoomState(room) {
  * @param {Room} room
  * @param {import('socket.io').Socket} socket
  */
+function playerForSocket(room, socket) {
+  const byId = room.players.get(socket.id)
+  if (byId) return byId
+  const email = String(socket.data.email || '')
+    .trim()
+    .toLowerCase()
+  if (!email) return null
+  for (const [oldId, player] of room.players) {
+    if (player.email !== email) continue
+    room.players.delete(oldId)
+    player.id = socket.id
+    room.players.set(socket.id, player)
+    return player
+  }
+  return null
+}
+
 function requireHost(room, socket) {
-  const player = room.players.get(socket.id)
+  const player = playerForSocket(room, socket)
   return Boolean(player?.isHost)
 }
 
@@ -866,7 +1012,10 @@ function requireHost(room, socket) {
 function emitRoom(code) {
   const room = rooms.get(code)
   if (!room) return
-  io.to(code).emit('room:update', publicRoomState(room))
+  const state = publicRoomState(room)
+  for (const player of room.players.values()) {
+    io.to(player.id).emit('room:update', state)
+  }
 }
 
 /**
@@ -1114,7 +1263,10 @@ io.on('connection', (socket) => {
 
     if (isHost) clearHostOfflineTimer(roomId)
 
-    callback?.({ room: publicRoomState(room), playerId: socket.id })
+    callback?.({
+      room: publicRoomState(room),
+      playerId: socket.id,
+    })
     emitRoom(roomId)
   })
 
@@ -1159,24 +1311,35 @@ io.on('connection', (socket) => {
     emitRoom(code)
   })
 
-  socket.on('vote:cast', ({ value }) => {
+  socket.on('vote:cast', ({ value }, callback) => {
     const code = socket.data.roomCode
     const room = code ? rooms.get(code) : null
-    const player = room?.players.get(socket.id)
-    if (!room || !player || player.isHost || room.revealed) return
+    const player = room ? playerForSocket(room, socket) : null
+    if (!room || !player || player.isHost || room.revealed) {
+      callback?.({ error: 'Cannot vote now' })
+      return
+    }
     const allowed = new Set(['0', '½', '1', '2', '3', '5', '8', '13', '21', '34', '?', '☕'])
-    if (typeof value !== 'string' || !allowed.has(value)) return
+    if (typeof value !== 'string' || !allowed.has(value)) {
+      callback?.({ error: 'Invalid vote' })
+      return
+    }
     player.vote = value
     emitRoom(code)
+    callback?.({ ok: true })
   })
 
-  socket.on('vote:clear', () => {
+  socket.on('vote:clear', (callback) => {
     const code = socket.data.roomCode
     const room = code ? rooms.get(code) : null
-    const player = room?.players.get(socket.id)
-    if (!room || !player || player.isHost || room.revealed) return
+    const player = room ? playerForSocket(room, socket) : null
+    if (!room || !player || player.isHost || room.revealed) {
+      callback?.({ error: 'Cannot clear vote now' })
+      return
+    }
     player.vote = null
     emitRoom(code)
+    callback?.({ ok: true })
   })
 
   socket.on('round:reveal', () => {

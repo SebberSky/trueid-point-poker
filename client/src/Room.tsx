@@ -12,9 +12,11 @@ import {
   denyRoomMember,
   fetchPlanningTickets,
   searchIssues,
+  searchIssuesBySummary,
   setIssueStoryPoints,
 } from './jiraApi'
 import { TicketViewer } from './TicketViewer'
+import { CardArt, CardBackArt, cardTheme } from './CardArt'
 import {
   POINT_VALUES,
   averageVote,
@@ -51,6 +53,13 @@ export function Room({ room, playerId, onRoomUpdate, onLeave }: RoomProps) {
   const [storyPointBusy, setStoryPointBusy] = useState(false)
   const [storyPointError, setStoryPointError] = useState<string | null>(null)
   const [hostPoints, setHostPoints] = useState<string | null>(null)
+  const [ticketRefreshKey, setTicketRefreshKey] = useState(0)
+  const [sameTitleOpen, setSameTitleOpen] = useState(false)
+  const [sameTitleIssues, setSameTitleIssues] = useState<PlanningIssue[]>([])
+  const [sameTitleKey, setSameTitleKey] = useState<string | null>(null)
+  const [sameTitleBusy, setSameTitleBusy] = useState(false)
+  const [sameTitleDialogOpen, setSameTitleDialogOpen] = useState(false)
+  const [applyPoints, setApplyPoints] = useState('')
   const wasRevealedRef = useRef(false)
 
   const me = room.players.find((player) => player.id === playerId)
@@ -75,9 +84,14 @@ export function Room({ room, playerId, onRoomUpdate, onLeave }: RoomProps) {
   }, [room.pending])
 
   useEffect(() => {
-    if (!me?.hasVoted) setLocalVote(null)
-    if (room.revealed && me?.vote) setLocalVote(me.vote)
-  }, [room, playerId, me])
+    if (room.revealed && me?.vote) {
+      setLocalVote(me.vote)
+      return
+    }
+    if (!room.revealed && me && !me.hasVoted) {
+      setLocalVote(null)
+    }
+  }, [room.revealed, room.selectedTicket?.key, me?.hasVoted, me?.vote])
 
   useEffect(() => {
     if (room.revealed && !wasRevealedRef.current) {
@@ -87,6 +101,30 @@ export function Room({ room, playerId, onRoomUpdate, onLeave }: RoomProps) {
     if (!room.revealed) setHostPoints(null)
     wasRevealedRef.current = room.revealed
   }, [room.revealed, avg])
+
+  useEffect(() => {
+    setSameTitleOpen(false)
+    setSameTitleIssues([])
+    setSameTitleKey(null)
+    setSameTitleBusy(false)
+    setSameTitleDialogOpen(false)
+    setApplyPoints('')
+    setStoryPointError(null)
+  }, [room.revealed, selected?.key])
+
+  useEffect(() => {
+    if (!sameTitleDialogOpen) return
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setSameTitleDialogOpen(false)
+    }
+    const previous = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    window.addEventListener('keydown', onKey)
+    return () => {
+      window.removeEventListener('keydown', onKey)
+      document.body.style.overflow = previous
+    }
+  }, [sameTitleDialogOpen])
 
   function handleHostPointsChange(raw: string) {
     if (raw === '' || /^\d*\.?\d*$/.test(raw)) {
@@ -174,11 +212,11 @@ export function Room({ room, playerId, onRoomUpdate, onLeave }: RoomProps) {
     if (isHost || room.revealed) return
     if (localVote === value) {
       setLocalVote(null)
-      clearVote()
+      void clearVote()
       return
     }
     setLocalVote(value)
-    castVote(value)
+    void castVote(value)
   }
 
   async function handleApprove(email: string) {
@@ -207,10 +245,22 @@ export function Room({ room, playerId, onRoomUpdate, onLeave }: RoomProps) {
     }
   }
 
+  function handleApplyPointsChange(raw: string) {
+    if (raw === '' || /^\d*\.?\d*$/.test(raw)) {
+      setApplyPoints(raw)
+    }
+  }
+
   async function handleSetStoryPoint() {
     if (!selected?.key || storyPointsValue == null) return
     setStoryPointBusy(true)
     setStoryPointError(null)
+    const pointsText = String(storyPointsValue)
+    setApplyPoints(pointsText)
+    setSameTitleKey(null)
+    setSameTitleOpen(true)
+    setSameTitleDialogOpen(true)
+    setSameTitleIssues([])
     try {
       await setIssueStoryPoints({
         key: selected.key,
@@ -218,7 +268,57 @@ export function Room({ room, playerId, onRoomUpdate, onLeave }: RoomProps) {
         roomId: room.code,
         boardId: room.boardId,
       })
-      resetRound()
+      setTicketRefreshKey((n) => n + 1)
+    } catch (err) {
+      setStoryPointError(
+        err instanceof Error ? err.message : 'Failed to set story points',
+      )
+    } finally {
+      setStoryPointBusy(false)
+    }
+
+    setSameTitleBusy(true)
+    try {
+      const data = await searchIssuesBySummary({
+        summary: selected.summary,
+        excludeKey: selected.key,
+        roomId: room.code,
+      })
+      const issues = (data.issues || []).filter(
+        (issue) => issue.key !== selected.key,
+      )
+      setSameTitleIssues(issues)
+      setSameTitleKey(issues[0]?.key || null)
+      setSameTitleDialogOpen(issues.length > 0)
+    } catch (err) {
+      setSameTitleIssues([])
+      setSameTitleKey(null)
+      setSameTitleDialogOpen(false)
+      setStoryPointError(
+        err instanceof Error ? err.message : 'Failed to find matching tickets',
+      )
+    } finally {
+      setSameTitleBusy(false)
+    }
+  }
+
+  async function handleApplySameTitlePoints() {
+    const points = parseStoryPointsInput(applyPoints)
+    if (!sameTitleKey || points == null || storyPointBusy) return
+    setStoryPointBusy(true)
+    setStoryPointError(null)
+    try {
+      await setIssueStoryPoints({
+        key: sameTitleKey,
+        points,
+        roomId: room.code,
+        boardId: room.boardId,
+      })
+      const remaining = sameTitleIssues.filter(
+        (issue) => issue.key !== sameTitleKey,
+      )
+      setSameTitleIssues(remaining)
+      setSameTitleKey(remaining[0]?.key || null)
     } catch (err) {
       setStoryPointError(
         err instanceof Error ? err.message : 'Failed to set story points',
@@ -318,8 +418,10 @@ export function Room({ room, playerId, onRoomUpdate, onLeave }: RoomProps) {
                 key={selected.key}
                 issueKey={selected.key}
                 roomId={room.code}
+                canEdit={isHost}
                 fallbackSummary={selected.summary}
                 fallbackUrl={selected.url}
+                refreshKey={ticketRefreshKey}
               />
             </div>
           ) : (
@@ -468,31 +570,47 @@ export function Room({ room, playerId, onRoomUpdate, onLeave }: RoomProps) {
             </div>
 
           <section className="players compact" aria-label="Voters">
-            {voters.map((player, index) => (
-              <article
-                key={player.id}
-                className={[
-                  'seat',
-                  player.hasVoted ? 'voted' : '',
-                  room.revealed ? 'revealed' : '',
-                  player.id === playerId ? 'me' : '',
-                ]
-                  .filter(Boolean)
-                  .join(' ')}
-                style={{ animationDelay: `${index * 40}ms` }}
-              >
-                <div className="card-face">
-                  {room.revealed ? (
-                    <span className="card-value">{player.vote ?? '—'}</span>
-                  ) : player.hasVoted ? (
-                    <span className="card-back" aria-label="Voted" />
-                  ) : (
-                    <span className="card-empty">…</span>
-                  )}
-                </div>
-                <p className="seat-name">{player.name}</p>
-              </article>
-            ))}
+            {voters.map((player, index) => {
+              const shownVote = room.revealed ? player.vote : null
+              const theme = shownVote ? cardTheme(shownVote) : null
+              return (
+                <article
+                  key={player.id}
+                  className={[
+                    'seat',
+                    player.hasVoted ? 'voted' : '',
+                    room.revealed ? 'revealed' : '',
+                    player.id === playerId ? 'me' : '',
+                  ]
+                    .filter(Boolean)
+                    .join(' ')}
+                  style={{ animationDelay: `${index * 40}ms` }}
+                >
+                  <div
+                    className={`card-face${theme ? ' illustrated' : ''}`}
+                    style={
+                      theme
+                        ? { background: theme.bg, color: theme.ink }
+                        : undefined
+                    }
+                  >
+                    {shownVote ? (
+                      <>
+                        <CardArt value={shownVote} />
+                        <span className="card-value">{shownVote}</span>
+                      </>
+                    ) : player.hasVoted ? (
+                      <span className="card-back" aria-label="Voted">
+                        <CardBackArt />
+                      </span>
+                    ) : (
+                      <span className="card-empty">…</span>
+                    )}
+                  </div>
+                  <p className="seat-name">{player.name}</p>
+                </article>
+              )
+            })}
           </section>
 
           {room.revealed ? (
@@ -534,22 +652,36 @@ export function Room({ room, playerId, onRoomUpdate, onLeave }: RoomProps) {
                 </button>
               ) : (
                 <>
-                  <button
-                    type="button"
-                    className="cta secondary"
-                    onClick={handleSetStoryPoint}
-                    disabled={
-                      storyPointBusy ||
-                      !selected?.key ||
-                      storyPointsValue == null
-                    }
-                  >
-                    {storyPointBusy
-                      ? 'Setting…'
-                      : storyPointsLabel != null
-                        ? `Set story point (${storyPointsLabel})`
-                        : 'Set story point'}
-                  </button>
+                  {!sameTitleOpen ? (
+                    <button
+                      type="button"
+                      className="cta secondary"
+                      onClick={handleSetStoryPoint}
+                      disabled={
+                        storyPointBusy ||
+                        !selected?.key ||
+                        storyPointsValue == null
+                      }
+                    >
+                      {storyPointBusy
+                        ? 'Setting…'
+                        : storyPointsLabel != null
+                          ? `Set story point (${storyPointsLabel})`
+                          : 'Set story point'}
+                    </button>
+                  ) : sameTitleBusy ? (
+                    <p className="field-hint">Finding matching tickets…</p>
+                  ) : sameTitleIssues.length > 0 && !sameTitleDialogOpen ? (
+                    <button
+                      type="button"
+                      className="cta secondary"
+                      onClick={() => setSameTitleDialogOpen(true)}
+                    >
+                      Similar tickets ({sameTitleIssues.length})
+                    </button>
+                  ) : sameTitleIssues.length === 0 ? (
+                    <p className="ticket-empty-mini">No other tickets</p>
+                  ) : null}
                   <button
                     type="button"
                     className="ghost"
@@ -563,17 +695,23 @@ export function Room({ room, playerId, onRoomUpdate, onLeave }: RoomProps) {
             </section>
           ) : (
             <section className="hand" aria-label="Your cards">
-              {POINT_VALUES.map((value) => (
-                <button
-                  key={value}
-                  type="button"
-                  className={`point-card ${localVote === value ? 'selected' : ''}`}
-                  disabled={room.revealed || !selected}
-                  onClick={() => handleVote(value)}
-                >
-                  {value}
-                </button>
-              ))}
+              {POINT_VALUES.map((value) => {
+                const theme = cardTheme(value)
+                return (
+                  <button
+                    key={value}
+                    type="button"
+                    className={`point-card ${localVote === value ? 'selected' : ''}`}
+                    style={{ background: theme.bg, color: theme.ink }}
+                    disabled={room.revealed}
+                    onClick={() => handleVote(value)}
+                    aria-label={`Vote ${value}`}
+                  >
+                    <CardArt value={value} />
+                    <span className="point-card-label">{value}</span>
+                  </button>
+                )
+              })}
             </section>
           )}
         </aside>
@@ -587,6 +725,140 @@ export function Room({ room, playerId, onRoomUpdate, onLeave }: RoomProps) {
           </button>
         )}
       </div>
+
+      {isHost && sameTitleDialogOpen ? (
+        <div
+          className="same-title-overlay"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Similar tickets"
+          onClick={() => setSameTitleDialogOpen(false)}
+        >
+          <div
+            className="same-title-dialog"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <header className="same-title-dialog-head">
+              <div>
+                <h2>Similar tickets</h2>
+                <p>
+                  {sameTitleBusy
+                    ? 'Finding matching tickets…'
+                    : `${sameTitleIssues.length} with the same title`}
+                </p>
+              </div>
+              <button
+                type="button"
+                className="ghost"
+                onClick={() => setSameTitleDialogOpen(false)}
+              >
+                Close
+              </button>
+            </header>
+            <div className="same-title-dialog-main">
+              <aside className="same-title-dialog-list">
+                {sameTitleIssues.length === 0 && !sameTitleBusy ? (
+                  <p className="ticket-empty-mini">No other tickets</p>
+                ) : (
+                  <ul className="same-title-list">
+                    {sameTitleIssues.map((issue) => {
+                      const picked = sameTitleKey === issue.key
+                      return (
+                        <li key={issue.key}>
+                          <button
+                            type="button"
+                            className={picked ? 'active' : ''}
+                            aria-pressed={picked}
+                            onClick={() => setSameTitleKey(issue.key)}
+                          >
+                            <span className="same-title-choice">
+                              <span
+                                className={`same-title-radio${picked ? ' is-on' : ''}`}
+                              />
+                              <span className={picked ? 'same-title-picked' : 'same-title-pick'}>
+                                {picked ? 'Selected' : 'Select'}
+                              </span>
+                            </span>
+                            <span className="ticket-list-keyrow">
+                              <strong>{issue.key}</strong>
+                              {issue.platforms?.length ? (
+                                <span className="same-title-platform">
+                                  {issue.platforms.join(', ')}
+                                </span>
+                              ) : null}
+                            </span>
+                            <em>{issue.summary}</em>
+                            {issue.status ? (
+                              <span className="same-title-status">
+                                {issue.status}
+                              </span>
+                            ) : null}
+                          </button>
+                        </li>
+                      )
+                    })}
+                  </ul>
+                )}
+              </aside>
+              <div className="same-title-preview">
+                {sameTitleKey ? (
+                  <TicketViewer
+                    key={sameTitleKey}
+                    issueKey={sameTitleKey}
+                    roomId={room.code}
+                    canEdit={false}
+                    fallbackSummary={
+                      sameTitleIssues.find((issue) => issue.key === sameTitleKey)
+                        ?.summary || ''
+                    }
+                    fallbackUrl={
+                      sameTitleIssues.find((issue) => issue.key === sameTitleKey)
+                        ?.url || ''
+                    }
+                  />
+                ) : (
+                  <p className="ticket-empty-mini">Select a ticket to preview</p>
+                )}
+              </div>
+            </div>
+            {sameTitleIssues.length > 0 ? (
+              <footer className="same-title-dialog-foot">
+                {storyPointError ? (
+                  <p className="form-error">{storyPointError}</p>
+                ) : null}
+                <div className="same-title-apply">
+                  <input
+                    className="same-title-points"
+                    value={applyPoints}
+                    onChange={(event) =>
+                      handleApplyPointsChange(event.target.value)
+                    }
+                    inputMode="decimal"
+                    pattern="[0-9]*[.]?[0-9]*"
+                    aria-label="Story points"
+                  />
+                  <button
+                    type="button"
+                    className="cta secondary"
+                    onClick={handleApplySameTitlePoints}
+                    disabled={
+                      storyPointBusy ||
+                      !sameTitleKey ||
+                      parseStoryPointsInput(applyPoints) == null
+                    }
+                  >
+                    {storyPointBusy
+                      ? 'Setting…'
+                      : sameTitleKey
+                        ? `Set point on ${sameTitleKey}`
+                        : 'Set point'}
+                  </button>
+                </div>
+              </footer>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
     </div>
   )
 }

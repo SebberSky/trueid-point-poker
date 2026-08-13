@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react'
+import { useEffect, useState, type CSSProperties, type MouseEvent, type ReactNode } from 'react'
 import { appUrl } from './appUrl'
 
 type AdfMark = { type: string; attrs?: Record<string, unknown> }
@@ -17,8 +17,15 @@ export type MediaMeta = {
   kind?: 'image' | 'video' | 'audio' | 'file' | string
 }
 
+type LightboxItem = {
+  url: string
+  alt: string
+  kind: string
+}
+
 type AdfOptions = {
   mediaIndex?: Record<string, MediaMeta>
+  onOpenMedia?: (item: LightboxItem) => void
 }
 
 function applyMarks(text: string, marks: AdfMark[] = []): ReactNode {
@@ -36,9 +43,114 @@ function applyMarks(text: string, marks: AdfMark[] = []): ReactNode {
           {node}
         </a>
       )
+    } else if (mark.type === 'textColor') {
+      const color = String(mark.attrs?.color || '')
+      if (color) node = <span style={{ color }}>{node}</span>
+    } else if (mark.type === 'backgroundColor') {
+      const color = String(mark.attrs?.color || '')
+      if (color) node = <span style={{ backgroundColor: color }}>{node}</span>
+    } else if (mark.type === 'subsup') {
+      node =
+        mark.attrs?.type === 'sub' ? <sub>{node}</sub> : <sup>{node}</sup>
     }
   }
   return node
+}
+
+function cellLayout(node: AdfNode): {
+  colSpan?: number
+  rowSpan?: number
+  style?: CSSProperties
+} {
+  const attrs = node.attrs || {}
+  const colspan = Number(attrs.colspan)
+  const rowspan = Number(attrs.rowspan)
+  const widths = Array.isArray(attrs.colwidth)
+    ? (attrs.colwidth as unknown[]).map((n) => Number(n)).filter((n) => n > 0)
+    : []
+  const width = widths.reduce((sum, n) => sum + n, 0)
+  const background =
+    typeof attrs.background === 'string' && attrs.background
+      ? attrs.background
+      : ''
+  const style: CSSProperties = {}
+  if (width) {
+    style.width = `${width}px`
+    style.minWidth = `${width}px`
+  }
+  if (background) style.backgroundColor = background
+  return {
+    colSpan: colspan > 1 ? colspan : undefined,
+    rowSpan: rowspan > 1 ? rowspan : undefined,
+    style: Object.keys(style).length ? style : undefined,
+  }
+}
+
+function headerRowCount(rows: AdfNode[]): number {
+  let count = 0
+  for (const row of rows) {
+    const cells = row.content || []
+    if (
+      row.type !== 'tableRow' ||
+      !cells.length ||
+      cells.some((cell) => cell.type !== 'tableHeader')
+    ) {
+      break
+    }
+    count += 1
+  }
+  return count
+}
+
+function renderTable(node: AdfNode, key: string, options: AdfOptions): ReactNode {
+  const rows = node.content || []
+  const numbered = Boolean(node.attrs?.isNumberColumnEnabled)
+  const headCount = headerRowCount(rows)
+  const width = Number(node.attrs?.width)
+  const layout = String(node.attrs?.layout || 'default')
+  const wrapClass = [
+    'adf-table-wrap',
+    numbered ? 'is-numbered' : '',
+    layout === 'wide' || layout === 'full-width' ? `layout-${layout}` : '',
+  ]
+    .filter(Boolean)
+    .join(' ')
+  const tableStyle: CSSProperties | undefined =
+    Number.isFinite(width) && width > 0 ? { width: `${width}px` } : undefined
+
+  function renderRow(row: AdfNode, rowKey: string, index: number, inHead: boolean) {
+    return (
+      <tr key={rowKey}>
+        {numbered ? (
+          inHead ? (
+            <th className="adf-table-num" />
+          ) : (
+            <td className="adf-table-num">{index + 1}</td>
+          )
+        ) : null}
+        {renderNodes(row.content, rowKey, options)}
+      </tr>
+    )
+  }
+
+  return (
+    <div key={key} className={wrapClass}>
+      <table className="adf-table" style={tableStyle}>
+        {headCount ? (
+          <thead>
+            {rows.slice(0, headCount).map((row, index) =>
+              renderRow(row, `${key}-h-${index}`, index, true),
+            )}
+          </thead>
+        ) : null}
+        <tbody>
+          {rows.slice(headCount).map((row, index) =>
+            renderRow(row, `${key}-b-${index}`, index, false),
+          )}
+        </tbody>
+      </table>
+    </div>
+  )
 }
 
 function renderNodes(
@@ -106,62 +218,120 @@ function guessKind(mimeType: string, filename: string, url = ''): string {
   return 'file'
 }
 
-function MediaPreview({ meta, alt }: { meta: MediaMeta; alt: string }) {
+function MediaPreview({
+  meta,
+  alt,
+  onOpen,
+}: {
+  meta: MediaMeta
+  alt: string
+  onOpen?: (item: LightboxItem) => void
+}) {
   const kind =
     meta.kind || guessKind(meta.mimeType || '', alt, meta.url)
 
+  function openPreview(event: MouseEvent) {
+    event.preventDefault()
+    event.stopPropagation()
+    if (!onOpen) return
+    onOpen({ url: meta.url, alt, kind })
+  }
+
   if (kind === 'image') {
     return (
-      <a
-        className="adf-media-link"
-        href={meta.url}
-        target="_blank"
-        rel="noreferrer"
-      >
+      <button type="button" className="adf-media-link" onClick={openPreview}>
         <img src={meta.url} alt={alt} className="adf-img" loading="lazy" />
-      </a>
+      </button>
     )
   }
 
   if (kind === 'video') {
     return (
-      <video className="adf-video" src={meta.url} controls preload="metadata">
-        <a href={meta.url} target="_blank" rel="noreferrer">
-          {alt}
-        </a>
-      </video>
+      <button type="button" className="adf-media-link" onClick={openPreview}>
+        <video className="adf-video" src={meta.url} preload="metadata" muted />
+      </button>
     )
   }
 
   if (kind === 'audio') {
     return (
-      <audio className="adf-audio" src={meta.url} controls preload="metadata">
-        <a href={meta.url} target="_blank" rel="noreferrer">
-          {alt}
-        </a>
-      </audio>
+      <button type="button" className="adf-media-link" onClick={openPreview}>
+        <span className="adf-file">{alt}</span>
+      </button>
     )
   }
 
   if (kind === 'pdf') {
     return (
-      <div className="adf-pdf-wrap">
-        <iframe
-          className="adf-pdf"
-          src={`${meta.url}#view=FitH`}
-          title={alt}
-        />
-        <a href={meta.url} target="_blank" rel="noreferrer" className="adf-file">
-          Open {alt}
-        </a>
-      </div>
+      <button type="button" className="adf-media-link" onClick={openPreview}>
+        <span className="adf-file">Preview {alt}</span>
+      </button>
     )
   }
 
   return (
-    <a className="adf-file" href={meta.url} target="_blank" rel="noreferrer">
+    <a className="adf-file" href={meta.url} rel="noreferrer">
       {alt}
     </a>
+  )
+}
+
+function MediaLightbox({
+  item,
+  onClose,
+}: {
+  item: LightboxItem | null
+  onClose: () => void
+}) {
+  useEffect(() => {
+    if (!item) return
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') onClose()
+    }
+    window.addEventListener('keydown', onKey)
+    const previous = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    return () => {
+      window.removeEventListener('keydown', onKey)
+      document.body.style.overflow = previous
+    }
+  }, [item, onClose])
+
+  if (!item) return null
+
+  return (
+    <div
+      className="media-lightbox"
+      role="dialog"
+      aria-modal="true"
+      aria-label="Media preview"
+      onClick={onClose}
+    >
+      <button
+        type="button"
+        className="media-lightbox-close"
+        onClick={onClose}
+      >
+        Close
+      </button>
+      <div
+        className="media-lightbox-body"
+        onClick={(event) => event.stopPropagation()}
+      >
+        {item.kind === 'image' ? (
+          <img src={item.url} alt={item.alt} />
+        ) : null}
+        {item.kind === 'video' ? (
+          <video src={item.url} controls autoPlay />
+        ) : null}
+        {item.kind === 'audio' ? (
+          <audio src={item.url} controls autoPlay />
+        ) : null}
+        {item.kind === 'pdf' ? (
+          <iframe src={`${item.url}#view=FitH`} title={item.alt} />
+        ) : null}
+      </div>
+    </div>
   )
 }
 
@@ -177,9 +347,14 @@ function renderNode(
           {renderNodes(node.content, key, options)}
         </div>
       )
-    case 'paragraph':
+    case 'paragraph': {
+      const alignment = String(node.attrs?.alignment || '')
+      const style: CSSProperties | undefined =
+        alignment === 'center' || alignment === 'right' || alignment === 'left'
+          ? { textAlign: alignment }
+          : undefined
       return (
-        <p key={key} className="adf-p">
+        <p key={key} className="adf-p" style={style}>
           {node.content?.length ? (
             renderNodes(node.content, key, options)
           ) : (
@@ -187,6 +362,7 @@ function renderNode(
           )}
         </p>
       )
+    }
     case 'heading': {
       const level = Math.min(Math.max(Number(node.attrs?.level) || 1, 1), 6)
       const Tag = `h${level}` as 'h1' | 'h2' | 'h3' | 'h4' | 'h5' | 'h6'
@@ -270,22 +446,38 @@ function renderNode(
           </div>
         )
       }
-      return <MediaPreview key={key} meta={meta} alt={alt} />
+      return <MediaPreview key={key} meta={meta} alt={alt} onOpen={options.onOpenMedia} />
     }
     case 'table':
-      return (
-        <div key={key} className="adf-table-wrap">
-          <table className="adf-table">
-            <tbody>{renderNodes(node.content, key, options)}</tbody>
-          </table>
-        </div>
-      )
+      return renderTable(node, key, options)
     case 'tableRow':
       return <tr key={key}>{renderNodes(node.content, key, options)}</tr>
-    case 'tableHeader':
-      return <th key={key}>{renderNodes(node.content, key, options)}</th>
-    case 'tableCell':
-      return <td key={key}>{renderNodes(node.content, key, options)}</td>
+    case 'tableHeader': {
+      const layout = cellLayout(node)
+      return (
+        <th
+          key={key}
+          colSpan={layout.colSpan}
+          rowSpan={layout.rowSpan}
+          style={layout.style}
+        >
+          {renderNodes(node.content, key, options)}
+        </th>
+      )
+    }
+    case 'tableCell': {
+      const layout = cellLayout(node)
+      return (
+        <td
+          key={key}
+          colSpan={layout.colSpan}
+          rowSpan={layout.rowSpan}
+          style={layout.style}
+        >
+          {renderNodes(node.content, key, options)}
+        </td>
+      )
+    }
     case 'panel':
       return (
         <div
@@ -338,6 +530,7 @@ export function AdfDocument({
   mediaUrls?: Record<string, string>
   html?: string | null
 }) {
+  const [preview, setPreview] = useState<LightboxItem | null>(null)
   const index =
     mediaIndex ||
     (mediaUrls
@@ -349,16 +542,64 @@ export function AdfDocument({
         )
       : undefined)
 
-  if (doc && typeof doc === 'object') {
-    return <>{renderNode(doc as AdfNode, 'root', { mediaIndex: index })}</>
+  function openFromHtml(event: MouseEvent<HTMLDivElement>) {
+    const target = event.target as HTMLElement | null
+    if (!target) return
+    const img = target.closest('img')
+    if (img?.src) {
+      event.preventDefault()
+      event.stopPropagation()
+      setPreview({
+        url: img.currentSrc || img.src,
+        alt: img.alt || 'image',
+        kind: 'image',
+      })
+      return
+    }
+    const media = target.closest('video, audio, a') as
+      | HTMLVideoElement
+      | HTMLAudioElement
+      | HTMLAnchorElement
+      | null
+    if (!media) return
+    const url =
+      'href' in media && media.href
+        ? media.href
+        : 'currentSrc' in media
+          ? media.currentSrc || media.src
+          : ''
+    if (!url) return
+    const kind = guessKind('', media.textContent || url, url)
+    if (kind === 'file') return
+    event.preventDefault()
+    event.stopPropagation()
+    setPreview({
+      url,
+      alt: media.textContent || url,
+      kind,
+    })
   }
-  if (html?.trim()) {
-    return (
+
+  const body =
+    doc && typeof doc === 'object' ? (
+      renderNode(doc as AdfNode, 'root', {
+        mediaIndex: index,
+        onOpenMedia: setPreview,
+      })
+    ) : html?.trim() ? (
       <div
         className="adf-html"
         dangerouslySetInnerHTML={{ __html: html }}
+        onClickCapture={openFromHtml}
       />
+    ) : (
+      <p className="adf-empty">No description</p>
     )
-  }
-  return <p className="adf-empty">No description</p>
+
+  return (
+    <>
+      {body}
+      <MediaLightbox item={preview} onClose={() => setPreview(null)} />
+    </>
+  )
 }
