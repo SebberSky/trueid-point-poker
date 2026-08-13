@@ -39,14 +39,20 @@ function expectedCloudUrl() {
     .toLowerCase()
 }
 
+function withTrailingSlash(url) {
+  const raw = String(url || '').trim()
+  if (!raw) return '/poker/'
+  return raw.endsWith('/') ? raw : `${raw}/`
+}
+
 function appHomeUrl() {
   const fromEnv = String(process.env.APP_PUBLIC_URL || '').trim().replace(/\/+$/, '')
-  if (fromEnv) return fromEnv
+  if (fromEnv) return withTrailingSlash(fromEnv)
   const redirect = redirectUri()
   const marker = '/api/auth/atlassian/callback'
   const idx = redirect.indexOf(marker)
-  if (idx > 0) return redirect.slice(0, idx)
-  return '/poker'
+  if (idx > 0) return withTrailingSlash(redirect.slice(0, idx))
+  return '/poker/'
 }
 
 /**
