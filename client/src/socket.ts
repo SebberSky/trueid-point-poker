@@ -15,7 +15,7 @@ export function getSocket(): Socket {
       autoConnect: false,
       withCredentials: true,
       path: '/poker/socket.io',
-      transports: ['websocket', 'polling'] as ('websocket' | 'polling')[],
+      transports: ['polling', 'websocket'] as ('websocket' | 'polling')[],
     }
     socket = SERVER_URL ? io(SERVER_URL, options) : io(options)
   }
@@ -34,7 +34,12 @@ export function ensureSocketConnected(): Promise<Socket> {
       cleanup()
       reject(err)
     }
+    const timer = window.setTimeout(() => {
+      cleanup()
+      reject(new Error('Socket connection failed'))
+    }, 8000)
     const cleanup = () => {
+      window.clearTimeout(timer)
       s.off('connect', onConnect)
       s.off('connect_error', onError)
     }
@@ -99,35 +104,52 @@ export function selectTicket(payload: {
   summary: string
   url: string
 }): Promise<{ ok?: boolean; error?: string; room?: RoomState }> {
-  return new Promise((resolve) => {
-    getSocket().emit(
-      'ticket:select',
-      payload,
-      (result: { ok?: boolean; error?: string; room?: RoomState }) => {
-        resolve(result || { ok: true })
-      },
-    )
-  })
+  return ensureSocketConnected().then(
+    (s) =>
+      new Promise((resolve) => {
+        s.emit(
+          'ticket:select',
+          payload,
+          (result: { ok?: boolean; error?: string; room?: RoomState }) => {
+            resolve(result || { ok: true })
+          },
+        )
+      }),
+  )
 }
 
 export function setTopic(topic: string) {
-  getSocket().emit('room:topic', { topic })
+  void ensureSocketConnected().then((s) => s.emit('room:topic', { topic }))
 }
 
 export function castVote(value: string) {
-  getSocket().emit('vote:cast', { value })
+  return ensureSocketConnected().then(
+    (s) =>
+      new Promise<{ ok?: boolean; error?: string }>((resolve) => {
+        s.emit('vote:cast', { value }, (result: { ok?: boolean; error?: string }) => {
+          resolve(result || { ok: true })
+        })
+      }),
+  )
 }
 
 export function clearVote() {
-  getSocket().emit('vote:clear')
+  return ensureSocketConnected().then(
+    (s) =>
+      new Promise<{ ok?: boolean; error?: string }>((resolve) => {
+        s.emit('vote:clear', (result: { ok?: boolean; error?: string }) => {
+          resolve(result || { ok: true })
+        })
+      }),
+  )
 }
 
 export function revealRound() {
-  getSocket().emit('round:reveal')
+  void ensureSocketConnected().then((s) => s.emit('round:reveal'))
 }
 
 export function resetRound() {
-  getSocket().emit('round:reset')
+  void ensureSocketConnected().then((s) => s.emit('round:reset'))
 }
 
 export function leaveRoomSocket() {

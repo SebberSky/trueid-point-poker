@@ -648,11 +648,459 @@ export async function searchIssues(query, auth = null) {
   return { query: q, issues: [...byKey.values()].slice(0, 50) }
 }
 
+const PLATFORM_SINGLE = 'customfield_10134'
+const PLATFORM_MULTI = 'customfield_11830'
+const PLATFORM_FIELDS = [PLATFORM_SINGLE, PLATFORM_MULTI]
+const NEED_QA_FIELD = 'customfield_12252'
+const PLATFORM_FALLBACK = ['iOS', 'Android']
+
+function fieldLabels(value) {
+  if (value == null || value === '') return []
+  const items = Array.isArray(value) ? value : [value]
+  const labels = []
+  for (const item of items) {
+    if (item == null || item === '') continue
+    if (typeof item === 'string' || typeof item === 'number') {
+      labels.push(String(item))
+      continue
+    }
+    const label = item.value || item.name || item.label
+    if (label) labels.push(String(label))
+  }
+  return labels
+}
+
+function uniqueLabels(groups) {
+  const seen = new Set()
+  const out = []
+  for (const group of groups) {
+    for (const label of group) {
+      if (!seen.has(label)) {
+        seen.add(label)
+        out.push(label)
+      }
+    }
+  }
+  return out
+}
+
+function platformsFromFields(f) {
+  return uniqueLabels(PLATFORM_FIELDS.map((id) => fieldLabels(f[id])))
+}
+
+function titleAfterBrackets(summary) {
+  return String(summary || '')
+    .replace(/^\s*(?:\[[^\]]*\]\s*)+/, '')
+    .trim()
+}
+
+function normalizeSummary(value) {
+  return titleAfterBrackets(value)
+    .replace(/\s+/g, ' ')
+    .toLowerCase()
+}
+
+function mapSameTitleIssue(issue) {
+  return {
+    ...mapIssue(issue),
+    platforms: platformsFromFields(issue.fields || {}),
+  }
+}
+
+/**
+ * @param {string} summary
+ * @param {string} [excludeKey]
+ * @param {{ email: string, token: string } | null} [auth]
+ */
+export async function searchIssuesBySummary(
+  summary,
+  excludeKey = '',
+  auth = null,
+) {
+  const title = titleAfterBrackets(summary)
+  const skipKey = String(excludeKey || '')
+    .trim()
+    .toUpperCase()
+  if (!title) return { issues: [], summary: title }
+
+  const authOpt = auth ? { auth } : {}
+  const fields = [
+    'summary',
+    'status',
+    'issuetype',
+    'assignee',
+    ...PLATFORM_FIELDS,
+  ]
+  const byKey = new Map()
+  const escaped = escapeJqlString(title)
+  const queries = [
+    `summary ~ "\\"${escaped}\\"" ORDER BY key ASC`,
+    `summary ~ "${escaped}" ORDER BY key ASC`,
+  ]
+  const target = normalizeSummary(title)
+  for (const jql of queries) {
+    try {
+      const data = await jiraFetch('/rest/api/3/search/jql', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          jql,
+          maxResults: 50,
+          fields,
+        }),
+        ...authOpt,
+      })
+      for (const issue of data.issues || []) {
+        if (skipKey && issue.key === skipKey) continue
+        if (normalizeSummary(issue.fields?.summary) !== target) continue
+        byKey.set(issue.key, mapSameTitleIssue(issue))
+      }
+      if (byKey.size > 0) break
+    } catch {
+    }
+  }
+
+  const issues = [...byKey.values()].sort((a, b) =>
+    a.key.localeCompare(b.key),
+  )
+  return { summary: title, issues }
+}
+
+function fixVersionsFromFields(f) {
+  return fieldLabels(f.fixVersions)
+}
+
+function needQaFromFields(f) {
+  return fieldLabels(f[NEED_QA_FIELD])[0] || null
+}
+
+const NEED_QA_VALUES = ['Yes', 'No']
+
+/**
+ * @param {string} issueKey
+ * @param {string} needQa
+ * @param {{ email: string, token: string } | null} [auth]
+ */
+export async function setIssueNeedQa(issueKey, needQa, auth = null) {
+  const key = String(issueKey || '')
+    .trim()
+    .toUpperCase()
+  if (!/^[A-Z][A-Z0-9]+-\d+$/.test(key)) {
+    return { error: 'Invalid issue key', status: 400 }
+  }
+
+  const wanted = String(needQa || '').trim()
+  const match = NEED_QA_VALUES.find(
+    (value) => value.toLowerCase() === wanted.toLowerCase(),
+  )
+  if (!match) {
+    return { error: 'Need QA must be Yes or No', status: 400 }
+  }
+
+  const authOpt = auth ? { auth } : {}
+  try {
+    await jiraFetch(`/rest/api/3/issue/${encodeURIComponent(key)}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        fields: { [NEED_QA_FIELD]: { value: match } },
+      }),
+      ...authOpt,
+    })
+    return { key, needQa: match }
+  } catch (firstErr) {
+    try {
+      const meta = await jiraFetch(
+        `/rest/api/3/issue/${encodeURIComponent(key)}/editmeta`,
+        authOpt,
+      )
+      const allowed = meta?.fields?.[NEED_QA_FIELD]?.allowedValues || []
+      const option = allowed.find(
+        (item) => String(item.value || '').toLowerCase() === match.toLowerCase(),
+      )
+      if (!option?.id) {
+        return {
+          error: 'Need QA is not editable on this issue',
+          status: 400,
+        }
+      }
+      await jiraFetch(`/rest/api/3/issue/${encodeURIComponent(key)}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          fields: { [NEED_QA_FIELD]: { id: option.id } },
+        }),
+        ...authOpt,
+      })
+      return { key, needQa: match }
+    } catch (err) {
+      const detail =
+        err && typeof err === 'object' && 'data' in err
+          ? JSON.stringify(/** @type {any} */ (err).data)
+          : err instanceof Error
+            ? err.message
+            : String(firstErr)
+      return {
+        error: detail ? `Failed to set Need QA: ${detail}` : 'Failed to set Need QA',
+        status: /** @type {any} */ (err)?.status || 502,
+      }
+    }
+  }
+}
+
+function optionLabelsFromMeta(field) {
+  return fieldLabels(field?.allowedValues || [])
+}
+
+function sortVersionNames(versions) {
+  const list = Array.isArray(versions) ? versions : []
+  return [...list]
+    .filter((item) => item && !item.archived)
+    .sort((a, b) => {
+      const rel = Number(Boolean(a.released)) - Number(Boolean(b.released))
+      if (rel !== 0) return rel
+      return String(b.name || '').localeCompare(String(a.name || ''), undefined, {
+        numeric: true,
+      })
+    })
+    .map((item) => String(item.name || item.value || ''))
+    .filter(Boolean)
+}
+
+async function fieldContextOptions(fieldId, authOpt) {
+  try {
+    const contexts = await jiraFetch(
+      `/rest/api/3/field/${fieldId}/context?maxResults=50`,
+      authOpt,
+    )
+    const labels = []
+    for (const context of (contexts.values || []).slice(0, 5)) {
+      const opts = await jiraFetch(
+        `/rest/api/3/field/${fieldId}/context/${encodeURIComponent(context.id)}/option?maxResults=100`,
+        authOpt,
+      )
+      for (const option of opts.values || []) {
+        if (!option.disabled && option.value) labels.push(String(option.value))
+      }
+    }
+    return uniqueLabels([labels])
+  } catch {
+    return []
+  }
+}
+
+async function loadPlatformOptions(editFields, authOpt) {
+  const fromMeta = uniqueLabels([
+    optionLabelsFromMeta(editFields[PLATFORM_SINGLE]),
+    optionLabelsFromMeta(editFields[PLATFORM_MULTI]),
+  ])
+  if (fromMeta.length) return fromMeta
+  const fromContext = uniqueLabels([
+    await fieldContextOptions(PLATFORM_SINGLE, authOpt),
+    await fieldContextOptions(PLATFORM_MULTI, authOpt),
+  ])
+  return fromContext.length ? fromContext : PLATFORM_FALLBACK
+}
+
+async function loadFixVersionOptions(projectKey, editFields, authOpt) {
+  try {
+    const versions = await jiraFetch(
+      `/rest/api/3/project/${encodeURIComponent(projectKey)}/versions`,
+      authOpt,
+    )
+    const names = sortVersionNames(versions)
+    if (names.length) return names
+  } catch {
+  }
+  return sortVersionNames(editFields.fixVersions?.allowedValues || [])
+}
+
+function writeError(err, fallback) {
+  const detail =
+    err && typeof err === 'object' && 'data' in err
+      ? JSON.stringify(/** @type {any} */ (err).data)
+      : err instanceof Error
+        ? err.message
+        : ''
+  return {
+    error: detail ? `${fallback}: ${detail}` : fallback,
+    status: /** @type {any} */ (err)?.status || 502,
+  }
+}
+
+async function putIssueFields(key, fields, authOpt) {
+  await jiraFetch(`/rest/api/3/issue/${encodeURIComponent(key)}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ fields }),
+    ...authOpt,
+  })
+}
+
+function normalizeNames(values) {
+  const list = Array.isArray(values) ? values : [values]
+  return uniqueLabels([
+    list.map((item) => String(item || '').trim()).filter(Boolean),
+  ])
+}
+
+/**
+ * @param {string} issueKey
+ * @param {string[]} platforms
+ * @param {{ email: string, token: string } | null} [auth]
+ */
+export async function setIssuePlatforms(issueKey, platforms, auth = null) {
+  const key = String(issueKey || '')
+    .trim()
+    .toUpperCase()
+  if (!/^[A-Z][A-Z0-9]+-\d+$/.test(key)) {
+    return { error: 'Invalid issue key', status: 400 }
+  }
+  const names = normalizeNames(platforms)
+  const authOpt = auth ? { auth } : {}
+  let editFields = {}
+  try {
+    const meta = await jiraFetch(
+      `/rest/api/3/issue/${encodeURIComponent(key)}/editmeta`,
+      authOpt,
+    )
+    editFields = meta?.fields || {}
+  } catch {
+    editFields = {}
+  }
+
+  const fields = {}
+  if (editFields[PLATFORM_MULTI] || !editFields[PLATFORM_SINGLE]) {
+    fields[PLATFORM_MULTI] = names.map((value) => ({ value }))
+  }
+  if (editFields[PLATFORM_SINGLE] || !editFields[PLATFORM_MULTI]) {
+    fields[PLATFORM_SINGLE] = names[0] ? { value: names[0] } : null
+  }
+
+  try {
+    await putIssueFields(key, fields, authOpt)
+    return { key, platforms: names }
+  } catch (firstErr) {
+    for (const [fieldId, value] of Object.entries(fields)) {
+      try {
+        await putIssueFields(key, { [fieldId]: value }, authOpt)
+        return { key, platforms: names }
+      } catch {
+      }
+    }
+    return writeError(firstErr, 'Failed to set Platform')
+  }
+}
+
+/**
+ * @param {string} issueKey
+ * @param {string[]} versions
+ * @param {{ email: string, token: string } | null} [auth]
+ */
+export async function setIssueFixVersions(issueKey, versions, auth = null) {
+  const key = String(issueKey || '')
+    .trim()
+    .toUpperCase()
+  if (!/^[A-Z][A-Z0-9]+-\d+$/.test(key)) {
+    return { error: 'Invalid issue key', status: 400 }
+  }
+  const names = normalizeNames(versions)
+  const projectKey = key.split('-')[0]
+  const authOpt = auth ? { auth } : {}
+
+  /** @type {Map<string, { id?: string, name?: string }>} */
+  const byName = new Map()
+  try {
+    const existing = await jiraFetch(
+      `/rest/api/3/project/${encodeURIComponent(projectKey)}/versions`,
+      authOpt,
+    )
+    for (const version of existing || []) {
+      if (version?.name) byName.set(String(version.name).toLowerCase(), version)
+    }
+  } catch {
+  }
+
+  /** @type {{ id: string }[]} */
+  const resolved = []
+  for (const name of names) {
+    let found = byName.get(name.toLowerCase())
+    if (!found?.id) {
+      try {
+        found = await jiraFetch('/rest/api/3/version', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name, project: projectKey }),
+          ...authOpt,
+        })
+        if (found?.name) byName.set(String(found.name).toLowerCase(), found)
+      } catch (err) {
+        return writeError(err, `Fix version "${name}" was not found in Jira`)
+      }
+    }
+    if (!found?.id) {
+      return { error: `Fix version "${name}" was not found in Jira`, status: 400 }
+    }
+    resolved.push({ id: String(found.id) })
+  }
+
+  try {
+    await putIssueFields(key, { fixVersions: resolved }, authOpt)
+    return { key, fixVersions: names }
+  } catch (err) {
+    return writeError(err, 'Failed to set Fix version')
+  }
+}
+
 /**
  * @param {string} issueKey
  * @param {{ email: string, token: string } | null} [auth]
  * @param {string} [roomId]
  */
+const STORY_POINT_FALLBACK_FIELDS = [
+  'customfield_10124',
+  'customfield_11210',
+  'customfield_13828',
+  'customfield_12714',
+  'customfield_10016',
+]
+
+/** @type {string[] | null} */
+let storyPointFieldCache = null
+
+/**
+ * @param {{ auth?: { email: string, token: string } }} authOpt
+ */
+async function loadStoryPointFieldIds(authOpt) {
+  if (storyPointFieldCache) return storyPointFieldCache
+  const ids = new Set(STORY_POINT_FALLBACK_FIELDS)
+  try {
+    const fields = await jiraFetch('/rest/api/3/field', authOpt)
+    for (const field of Array.isArray(fields) ? fields : []) {
+      if (/story\s*points?/i.test(String(field.name || ''))) {
+        ids.add(field.id)
+      }
+    }
+  } catch {
+  }
+  storyPointFieldCache = [...ids]
+  return storyPointFieldCache
+}
+
+/**
+ * @param {Record<string, unknown>} fields
+ * @param {string[]} fieldIds
+ */
+function storyPointsFromFields(fields, fieldIds) {
+  for (const id of fieldIds) {
+    const raw = fields?.[id]
+    if (raw == null || raw === '') continue
+    const n = Number(raw)
+    if (Number.isFinite(n)) return n
+  }
+  return null
+}
+
 export async function getIssueDetails(issueKey, auth = null, roomId = '') {
   const key = String(issueKey || '')
     .trim()
@@ -663,6 +1111,7 @@ export async function getIssueDetails(issueKey, auth = null, roomId = '') {
 
   const authOpt = auth ? { auth } : {}
   const { base } = jiraConfig()
+  const storyPointFields = await loadStoryPointFieldIds(authOpt)
   const fields = [
     'summary',
     'description',
@@ -670,7 +1119,6 @@ export async function getIssueDetails(issueKey, auth = null, roomId = '') {
     'issuetype',
     'priority',
     'assignee',
-    'reporter',
     'labels',
     'components',
     'comment',
@@ -678,14 +1126,24 @@ export async function getIssueDetails(issueKey, auth = null, roomId = '') {
     'created',
     'updated',
     'parent',
+    'fixVersions',
+    NEED_QA_FIELD,
+    ...PLATFORM_FIELDS,
+    ...storyPointFields,
   ].join(',')
 
   const issue = await jiraFetch(
-    `/rest/api/3/issue/${encodeURIComponent(key)}?fields=${fields}&expand=renderedFields`,
+    `/rest/api/3/issue/${encodeURIComponent(key)}?fields=${fields}&expand=renderedFields,editmeta`,
     authOpt,
   )
   const f = issue.fields || {}
   const rendered = issue.renderedFields || {}
+  const editFields = issue.editmeta?.fields || {}
+  const projectKey = key.split('-')[0]
+  const [platformOptions, fixVersionOptions] = await Promise.all([
+    loadPlatformOptions(editFields, authOpt),
+    loadFixVersionOptions(projectKey, editFields, authOpt),
+  ])
   const room = String(roomId || '').trim()
 
   const attachments = (f.attachment || []).map((a) => {
@@ -737,12 +1195,12 @@ export async function getIssueDetails(issueKey, auth = null, roomId = '') {
           avatarUrl: f.assignee.avatarUrls?.['48x48'] || null,
         }
       : null,
-    reporter: f.reporter
-      ? {
-          displayName: f.reporter.displayName,
-          avatarUrl: f.reporter.avatarUrls?.['48x48'] || null,
-        }
-      : null,
+    platforms: platformsFromFields(f),
+    platformOptions,
+    fixVersions: fixVersionsFromFields(f),
+    fixVersionOptions,
+    needQa: needQaFromFields(f),
+    storyPoints: storyPointsFromFields(f, storyPointFields),
     labels: f.labels || [],
     components: (f.components || []).map((c) => c.name),
     parent: f.parent
@@ -767,13 +1225,6 @@ export async function getIssueDetails(issueKey, auth = null, roomId = '') {
     }),
   }
 }
-
-const STORY_POINT_FALLBACK_FIELDS = [
-  'customfield_10124',
-  'customfield_11210',
-  'customfield_13828',
-  'customfield_12714',
-]
 
 /**
  * @param {string} issueKey

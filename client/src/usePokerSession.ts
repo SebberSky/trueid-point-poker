@@ -19,7 +19,19 @@ export function usePokerSession() {
 
   useEffect(() => {
     const socket = getSocket()
-    const onUpdate = (next: RoomState) => setRoom(next)
+    const onUpdate = (next: RoomState) => {
+      setRoom(next)
+      setPlayerId((current) => {
+        if (current && next.players.some((player) => player.id === current)) {
+          return current
+        }
+        const email = readSession()?.email
+        const mine = email
+          ? next.players.find((player) => player.email === email)
+          : null
+        return mine?.id ?? current
+      })
+    }
     const onClosed = (payload: { roomId?: string; reason?: string }) => {
       const closedId = payload.roomId ? String(payload.roomId).toUpperCase() : ''
       const savedRoomId = readSession()?.room?.roomId
@@ -38,9 +50,26 @@ export function usePokerSession() {
     }
     socket.on('room:update', onUpdate)
     socket.on('room:closed', onClosed)
+    const onConnect = () => {
+      const session = readSession()
+      if (!session?.room) return
+      void enterRoom({
+        code: session.room.roomId,
+        name: session.displayName,
+        email: session.email,
+        boardName: session.room.boardName,
+        boardId: session.room.boardId,
+      }).then((result) => {
+        if ('error' in result) return
+        setRoom(result.room)
+        setPlayerId(result.playerId)
+      })
+    }
+    socket.on('connect', onConnect)
     return () => {
       socket.off('room:update', onUpdate)
       socket.off('room:closed', onClosed)
+      socket.off('connect', onConnect)
     }
   }, [])
 
@@ -57,7 +86,12 @@ export function usePokerSession() {
   }) {
     setBusy(true)
     setError(null)
-    await bindIdentity(payload.email)
+    const bound = await bindIdentity(payload.email)
+    if (bound?.error) {
+      setBusy(false)
+      setError(bound.error)
+      return false
+    }
     const result = await enterRoom({
       code: payload.code,
       name: payload.displayName,

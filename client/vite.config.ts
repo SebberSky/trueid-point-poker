@@ -37,6 +37,12 @@ export default defineConfig({
         target: 'http://127.0.0.1:3002',
         ws: true,
         rewrite: (p) => p.replace(new RegExp(`^${MOUNT}`), ''),
+        configure(proxy) {
+          proxy.on('proxyReqWs', (proxyReq, req) => {
+            const cookie = req.headers.cookie
+            if (cookie) proxyReq.setHeader('Cookie', cookie)
+          })
+        },
       },
     },
   },
@@ -53,6 +59,12 @@ export default defineConfig({
         target: 'http://127.0.0.1:3002',
         ws: true,
         rewrite: (p) => p.replace(new RegExp(`^${MOUNT}`), ''),
+        configure(proxy) {
+          proxy.on('proxyReqWs', (proxyReq, req) => {
+            const cookie = req.headers.cookie
+            if (cookie) proxyReq.setHeader('Cookie', cookie)
+          })
+        },
       },
     },
   },

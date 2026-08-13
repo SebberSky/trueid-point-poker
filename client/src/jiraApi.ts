@@ -172,6 +172,24 @@ export async function fetchPlanningTickets(
   return data
 }
 
+export async function searchIssuesBySummary(payload: {
+  summary: string
+  excludeKey?: string
+  roomId: string
+}): Promise<{ summary: string; issues: import('./types').PlanningIssue[] }> {
+  const res = await apiFetch('/api/issues/same-summary', {
+    method: 'POST',
+    body: JSON.stringify({
+      summary: payload.summary,
+      excludeKey: payload.excludeKey,
+      roomId: payload.roomId,
+    }),
+  })
+  const data = await res.json()
+  if (!res.ok) throw new Error(data?.error || 'Failed to find matching tickets')
+  return data
+}
+
 export async function searchIssues(
   query: string,
   roomId?: string,
@@ -209,6 +227,66 @@ export async function setIssueStoryPoints(payload: {
     fieldId?: string | null
     boardId?: number | null
   }
+}
+
+export async function setIssueNeedQa(payload: {
+  key: string
+  needQa: 'Yes' | 'No'
+  roomId: string
+}) {
+  const res = await apiFetch(
+    `/api/issues/${encodeURIComponent(payload.key)}/need-qa`,
+    {
+      method: 'PUT',
+      body: JSON.stringify({
+        needQa: payload.needQa,
+        roomId: payload.roomId,
+      }),
+    },
+  )
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(data?.error || 'Failed to set Need QA')
+  return data as { key: string; needQa: string }
+}
+
+export async function setIssuePlatforms(payload: {
+  key: string
+  platforms: string[]
+  roomId: string
+}) {
+  const res = await apiFetch(
+    `/api/issues/${encodeURIComponent(payload.key)}/platforms`,
+    {
+      method: 'PUT',
+      body: JSON.stringify({
+        platforms: payload.platforms,
+        roomId: payload.roomId,
+      }),
+    },
+  )
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(data?.error || 'Failed to set Platform')
+  return data as { key: string; platforms: string[] }
+}
+
+export async function setIssueFixVersions(payload: {
+  key: string
+  fixVersions: string[]
+  roomId: string
+}) {
+  const res = await apiFetch(
+    `/api/issues/${encodeURIComponent(payload.key)}/fix-versions`,
+    {
+      method: 'PUT',
+      body: JSON.stringify({
+        fixVersions: payload.fixVersions,
+        roomId: payload.roomId,
+      }),
+    },
+  )
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(data?.error || 'Failed to set Fix version')
+  return data as { key: string; fixVersions: string[] }
 }
 
 export const ADMIN_PATH = 'room-hosts-ctrl'
