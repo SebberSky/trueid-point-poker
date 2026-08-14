@@ -350,7 +350,7 @@ export async function hasProjectAssignment(accountId, projectKey) {
   return Array.isArray(data.issues) && data.issues.length > 0
 }
 
-const ISSUE_FIELDS = 'summary,status,issuetype,assignee'
+const ISSUE_LIST_BASE_FIELDS = ['summary', 'status', 'issuetype', 'assignee']
 /** Only keep a closed sprint if it ended within this window. */
 const PREVIOUS_SPRINT_MAX_AGE_MS = 45 * 24 * 60 * 60 * 1000
 /** Cap backlog size — board backlog can contain years of ranked issues. */
@@ -360,8 +360,9 @@ const BACKLOG_UPDATED_WITHIN_DAYS = 120
 
 /**
  * @param {any} issue
+ * @param {string[]} [storyPointIds]
  */
-function mapIssue(issue) {
+function mapIssue(issue, storyPointIds = []) {
   const { base } = jiraConfig()
   return {
     key: issue.key,
@@ -371,6 +372,20 @@ function mapIssue(issue) {
     issuetype: issue.fields?.issuetype?.name || '',
     assignee: issue.fields?.assignee?.displayName || null,
     url: `${base}/browse/${issue.key}`,
+    storyPoints: storyPointsFromFields(issue.fields || {}, storyPointIds),
+  }
+}
+
+/**
+ * @param {{ email: string, token: string } | null} [auth]
+ */
+async function issueListFieldPlan(auth = null) {
+  const authOpt = auth ? { auth } : {}
+  const storyPointIds = await loadStoryPointFieldIds(authOpt)
+  return {
+    storyPointIds,
+    csv: [...ISSUE_LIST_BASE_FIELDS, ...storyPointIds].join(','),
+    array: [...ISSUE_LIST_BASE_FIELDS, ...storyPointIds],
   }
 }
 
@@ -399,18 +414,24 @@ function isClosedIssue(issue) {
  * @param {number|string} sprintId
  * @param {{ email: string, token: string } | null} [auth]
  */
-async function fetchSprintIssues(boardId, sprintId, auth = null) {
+async function fetchSprintIssues(
+  boardId,
+  sprintId,
+  auth = null,
+  fieldCsv = ISSUE_LIST_BASE_FIELDS.join(','),
+  storyPointIds = [],
+) {
   const authOpt = auth ? { auth } : {}
   const issues = []
   let startAt = 0
   for (;;) {
     const data = await jiraFetch(
-      `/rest/agile/1.0/board/${boardId}/sprint/${sprintId}/issue?startAt=${startAt}&maxResults=50&fields=${ISSUE_FIELDS}`,
+      `/rest/agile/1.0/board/${boardId}/sprint/${sprintId}/issue?startAt=${startAt}&maxResults=50&fields=${fieldCsv}`,
       authOpt,
     )
     for (const issue of data.issues || []) {
       if (isClosedIssue(issue)) continue
-      issues.push(mapIssue(issue))
+      issues.push(mapIssue(issue, storyPointIds))
     }
     const total = data.total ?? startAt + (data.issues || []).length
     startAt += data.maxResults || 50
@@ -424,18 +445,24 @@ async function fetchSprintIssues(boardId, sprintId, auth = null) {
  * @param {string} [jql]
  * @param {{ email: string, token: string } | null} [auth]
  */
-async function fetchBacklogIssues(boardId, jql, auth = null) {
+async function fetchBacklogIssues(
+  boardId,
+  jql,
+  auth = null,
+  fieldCsv = ISSUE_LIST_BASE_FIELDS.join(','),
+  storyPointIds = [],
+) {
   const authOpt = auth ? { auth } : {}
   const issues = []
   let startAt = 0
   const query = jql ? `&jql=${encodeURIComponent(jql)}` : ''
   for (;;) {
     const data = await jiraFetch(
-      `/rest/agile/1.0/board/${boardId}/backlog?startAt=${startAt}&maxResults=50&fields=${ISSUE_FIELDS}${query}`,
+      `/rest/agile/1.0/board/${boardId}/backlog?startAt=${startAt}&maxResults=50&fields=${fieldCsv}${query}`,
       authOpt,
     )
     for (const issue of data.issues || []) {
-      issues.push(mapIssue(issue))
+      issues.push(mapIssue(issue, storyPointIds))
       if (issues.length >= BACKLOG_MAX_ISSUES) return issues
     }
     const total = data.total ?? startAt + (data.issues || []).length
@@ -449,15 +476,28 @@ async function fetchBacklogIssues(boardId, jql, auth = null) {
  * @param {number|string} boardId
  * @param {{ email: string, token: string } | null} [auth]
  */
-async function fetchRecentBacklogIssues(boardId, auth = null) {
+async function fetchRecentBacklogIssues(
+  boardId,
+  auth = null,
+  fieldCsv = ISSUE_LIST_BASE_FIELDS.join(','),
+  storyPointIds = [],
+) {
   try {
     return await fetchBacklogIssues(
       boardId,
       `updated >= -${BACKLOG_UPDATED_WITHIN_DAYS}d`,
       auth,
+      fieldCsv,
+      storyPointIds,
     )
   } catch {
-    return fetchBacklogIssues(boardId, undefined, auth)
+    return fetchBacklogIssues(
+      boardId,
+      undefined,
+      auth,
+      fieldCsv,
+      storyPointIds,
+    )
   }
 }
 
@@ -473,6 +513,7 @@ export async function getBoardPlanningTickets(boardId, auth = null) {
   }
 
   const authOpt = auth ? { auth } : {}
+  const { csv: fieldCsv, storyPointIds } = await issueListFieldPlan(auth)
   const [active, closed, future] = await Promise.all([
     jiraFetch(
       `/rest/agile/1.0/board/${id}/sprint?state=active&maxResults=10`,
@@ -491,7 +532,13 @@ export async function getBoardPlanningTickets(boardId, auth = null) {
   /** @type {{ id: number, name: string, state?: string, issues: ReturnType<typeof mapIssue>[] }[]} */
   const activeSprints = []
   for (const sprint of active.values || []) {
-    const issues = await fetchSprintIssues(id, sprint.id, auth)
+    const issues = await fetchSprintIssues(
+      id,
+      sprint.id,
+      auth,
+      fieldCsv,
+      storyPointIds,
+    )
     if (issues.length === 0) continue
     activeSprints.push({
       id: sprint.id,
@@ -516,7 +563,13 @@ export async function getBoardPlanningTickets(boardId, auth = null) {
   /** @type {{ id: number, name: string, issues: ReturnType<typeof mapIssue>[] } | null} */
   let previousSprint = null
   if (previous && previousAge <= PREVIOUS_SPRINT_MAX_AGE_MS) {
-    const issues = await fetchSprintIssues(id, previous.id, auth)
+    const issues = await fetchSprintIssues(
+      id,
+      previous.id,
+      auth,
+      fieldCsv,
+      storyPointIds,
+    )
     if (issues.length > 0) {
       previousSprint = {
         id: previous.id,
@@ -528,7 +581,13 @@ export async function getBoardPlanningTickets(boardId, auth = null) {
 
   const backlogGroups = []
   for (const sprint of future.values || []) {
-    const issues = await fetchSprintIssues(id, sprint.id, auth)
+    const issues = await fetchSprintIssues(
+      id,
+      sprint.id,
+      auth,
+      fieldCsv,
+      storyPointIds,
+    )
     if (issues.length === 0) continue
     backlogGroups.push({
       id: sprint.id,
@@ -542,7 +601,7 @@ export async function getBoardPlanningTickets(boardId, auth = null) {
     id: 0,
     name: 'Backlog',
     state: 'backlog',
-    issues: await fetchRecentBacklogIssues(id, auth),
+    issues: await fetchRecentBacklogIssues(id, auth, fieldCsv, storyPointIds),
   })
 
   return { boardId: id, activeSprints, previousSprint, backlogGroups }
@@ -564,6 +623,7 @@ export async function searchIssues(query, auth = null) {
   if (q.length > 100) return { error: 'Query too long', status: 400 }
 
   const authOpt = auth ? { auth } : {}
+  const { array: listFields, storyPointIds } = await issueListFieldPlan(auth)
   const escaped = escapeJqlString(q)
   const clauses = [`summary ~ "${escaped}"`]
 
@@ -602,14 +662,14 @@ export async function searchIssues(query, auth = null) {
     body: JSON.stringify({
       jql,
       maxResults: 40,
-      fields: ['summary', 'status', 'issuetype', 'assignee'],
+      fields: listFields,
     }),
     ...authOpt,
   })
 
   const byKey = new Map()
   for (const issue of data.issues || []) {
-    byKey.set(issue.key, mapIssue(issue))
+    byKey.set(issue.key, mapIssue(issue, storyPointIds))
   }
 
   // Issue picker improves partial key / title matches across boards.
@@ -633,12 +693,12 @@ export async function searchIssues(query, auth = null) {
         body: JSON.stringify({
           jql: keyJql,
           maxResults: missing.length,
-          fields: ['summary', 'status', 'issuetype', 'assignee'],
+          fields: listFields,
         }),
         ...authOpt,
       })
       for (const issue of extra.issues || []) {
-        byKey.set(issue.key, mapIssue(issue))
+        byKey.set(issue.key, mapIssue(issue, storyPointIds))
       }
     }
   } catch {
@@ -1344,6 +1404,60 @@ export async function setIssueStoryPoints(
       ? `Failed to set story points: ${detail}`
       : 'Failed to set story points',
     status: /** @type {any} */ (lastError)?.status || 502,
+  }
+}
+
+/**
+ * Reorder an issue on the Jira board rank (same sprint / backlog).
+ * @param {{ issueKey: string, rankBeforeIssue?: string, rankAfterIssue?: string }} payload
+ * @param {{ email: string, token: string } | null} [auth]
+ */
+export async function rankIssue(payload, auth = null) {
+  const issueKey = String(payload?.issueKey || '')
+    .trim()
+    .toUpperCase()
+  const rankBeforeIssue = String(payload?.rankBeforeIssue || '')
+    .trim()
+    .toUpperCase()
+  const rankAfterIssue = String(payload?.rankAfterIssue || '')
+    .trim()
+    .toUpperCase()
+  if (!/^[A-Z][A-Z0-9]+-\d+$/.test(issueKey)) {
+    return { error: 'Invalid issue key', status: 400 }
+  }
+  if (rankBeforeIssue && !/^[A-Z][A-Z0-9]+-\d+$/.test(rankBeforeIssue)) {
+    return { error: 'Invalid rankBeforeIssue', status: 400 }
+  }
+  if (rankAfterIssue && !/^[A-Z][A-Z0-9]+-\d+$/.test(rankAfterIssue)) {
+    return { error: 'Invalid rankAfterIssue', status: 400 }
+  }
+  if (!rankBeforeIssue && !rankAfterIssue) {
+    return { error: 'rankBeforeIssue or rankAfterIssue is required', status: 400 }
+  }
+
+  const body = { issues: [issueKey] }
+  if (rankBeforeIssue) body.rankBeforeIssue = rankBeforeIssue
+  else body.rankAfterIssue = rankAfterIssue
+
+  try {
+    await jiraFetch('/rest/agile/1.0/issue/rank', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      ...(auth ? { auth } : {}),
+    })
+    return { ok: true, key: issueKey }
+  } catch (err) {
+    const detail =
+      err && typeof err === 'object' && 'data' in err
+        ? JSON.stringify(/** @type {any} */ (err).data)
+        : err instanceof Error
+          ? err.message
+          : String(err)
+    return {
+      error: detail ? `Failed to rank issue: ${detail}` : 'Failed to rank issue',
+      status: /** @type {any} */ (err)?.status || 502,
+    }
   }
 }
 

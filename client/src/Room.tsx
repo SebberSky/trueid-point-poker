@@ -14,6 +14,7 @@ import {
   searchIssues,
   searchIssuesBySummary,
   setIssueStoryPoints,
+  rankIssue,
 } from './jiraApi'
 import { TicketViewer } from './TicketViewer'
 import { CardArt, CardBackArt, cardTheme } from './CardArt'
@@ -24,6 +25,7 @@ import {
   voterList,
   type PendingMember,
   type PlanningData,
+  type PlanningGroup,
   type PlanningIssue,
   type RoomState,
 } from './types'
@@ -60,6 +62,8 @@ export function Room({ room, playerId, onRoomUpdate, onLeave }: RoomProps) {
   const [sameTitleBusy, setSameTitleBusy] = useState(false)
   const [sameTitleDialogOpen, setSameTitleDialogOpen] = useState(false)
   const [applyPoints, setApplyPoints] = useState('')
+  const [checkedKeys, setCheckedKeys] = useState<string[]>([])
+  const [ticketRailWide, setTicketRailWide] = useState(false)
   const wasRevealedRef = useRef(false)
 
   const me = room.players.find((player) => player.id === playerId)
@@ -95,12 +99,18 @@ export function Room({ room, playerId, onRoomUpdate, onLeave }: RoomProps) {
 
   useEffect(() => {
     if (room.revealed && !wasRevealedRef.current) {
-      const points = parseStoryPointsInput(avg)
-      setHostPoints(points == null ? null : String(points))
+      setHostPoints((prev) => {
+        if (prev) return prev
+        const points = parseStoryPointsInput(avg)
+        return points == null ? null : String(points)
+      })
     }
-    if (!room.revealed) setHostPoints(null)
     wasRevealedRef.current = room.revealed
   }, [room.revealed, avg])
+
+  useEffect(() => {
+    setHostPoints(null)
+  }, [selected?.key])
 
   useEffect(() => {
     setSameTitleOpen(false)
@@ -268,6 +278,7 @@ export function Room({ room, playerId, onRoomUpdate, onLeave }: RoomProps) {
         roomId: room.code,
         boardId: room.boardId,
       })
+      patchPlanningIssuePoints(selected.key, storyPointsValue)
       setTicketRefreshKey((n) => n + 1)
     } catch (err) {
       setStoryPointError(
@@ -325,6 +336,114 @@ export function Room({ room, playerId, onRoomUpdate, onLeave }: RoomProps) {
       )
     } finally {
       setStoryPointBusy(false)
+    }
+  }
+
+  const allPlanningIssues = useMemo(() => {
+    if (!planning) return []
+    return [
+      ...(planning.activeSprints || []).flatMap((group) => group.issues),
+      ...planning.backlogGroups.flatMap((group) => group.issues),
+      ...(planning.previousSprint?.issues || []),
+    ]
+  }, [planning])
+
+  const checkedSet = useMemo(() => new Set(checkedKeys), [checkedKeys])
+  const selectedPointsTotal = useMemo(() => {
+    const byKey = new Map<string, PlanningIssue>()
+    for (const issue of allPlanningIssues) byKey.set(issue.key, issue)
+    for (const issue of searchResults || []) byKey.set(issue.key, issue)
+    return sumStoryPoints(
+      [...checkedSet]
+        .map((key) => byKey.get(key))
+        .filter((issue): issue is PlanningIssue => Boolean(issue)),
+    )
+  }, [allPlanningIssues, checkedSet, searchResults])
+
+  function patchPlanningIssuePoints(key: string, points: number) {
+    setPlanning((prev) => {
+      if (!prev) return prev
+      const patch = (issues: PlanningIssue[]) =>
+        issues.map((issue) =>
+          issue.key === key ? { ...issue, storyPoints: points } : issue,
+        )
+      return {
+        ...prev,
+        activeSprints: (prev.activeSprints || []).map((group) => ({
+          ...group,
+          issues: patch(group.issues),
+        })),
+        backlogGroups: prev.backlogGroups.map((group) => ({
+          ...group,
+          issues: patch(group.issues),
+        })),
+        previousSprint: prev.previousSprint
+          ? {
+              ...prev.previousSprint,
+              issues: patch(prev.previousSprint.issues),
+            }
+          : null,
+      }
+    })
+  }
+
+  function replaceGroupIssues(groupId: string, issues: PlanningIssue[]) {
+    setPlanning((prev) => {
+      if (!prev) return prev
+      const match = (group: PlanningGroup) =>
+        String(group.id) === groupId ? { ...group, issues } : group
+      return {
+        ...prev,
+        activeSprints: (prev.activeSprints || []).map(match),
+        backlogGroups: prev.backlogGroups.map(match),
+        previousSprint:
+          prev.previousSprint && String(prev.previousSprint.id) === groupId
+            ? { ...prev.previousSprint, issues }
+            : prev.previousSprint,
+      }
+    })
+  }
+
+  function toggleCheckedKey(key: string) {
+    setCheckedKeys((prev) =>
+      prev.includes(key) ? prev.filter((item) => item !== key) : [...prev, key],
+    )
+  }
+
+  function toggleCheckedGroup(keys: string[], selectAll: boolean) {
+    setCheckedKeys((prev) => {
+      const drop = new Set(keys)
+      const kept = prev.filter((key) => !drop.has(key))
+      return selectAll ? [...kept, ...keys] : kept
+    })
+  }
+
+  async function handleReorderIssues(
+    groupId: string,
+    issues: PlanningIssue[],
+    fromKey: string,
+    toKey: string,
+  ) {
+    const next = moveIssueInList(issues, fromKey, toKey)
+    if (!next) return
+    const newIndex = next.findIndex((issue) => issue.key === fromKey)
+    if (newIndex < 0) return
+    const rankBeforeIssue = newIndex === 0 ? next[1]?.key : undefined
+    const rankAfterIssue = newIndex === 0 ? undefined : next[newIndex - 1]?.key
+    if (!rankBeforeIssue && !rankAfterIssue) return
+    replaceGroupIssues(groupId, next)
+    setActionError(null)
+    try {
+      await rankIssue({
+        key: fromKey,
+        roomId: room.code,
+        ...(rankBeforeIssue
+          ? { rankBeforeIssue }
+          : { rankAfterIssue }),
+      })
+    } catch (err) {
+      replaceGroupIssues(groupId, issues)
+      setActionError(err instanceof Error ? err.message : 'Failed to reorder')
     }
   }
 
@@ -434,10 +553,26 @@ export function Room({ room, playerId, onRoomUpdate, onLeave }: RoomProps) {
         </section>
 
         {isHost && ticketRailOpen ? (
-          <aside className="ticket-rail float-panel" aria-label="Planning tickets">
+          <aside
+            className={`ticket-rail float-panel${ticketRailWide ? ' is-wide' : ''}`}
+            aria-label="Planning tickets"
+          >
             <div className="rail-head">
               <h2>Tickets</h2>
+              <button
+                type="button"
+                className="ghost rail-wide-btn"
+                onClick={() => setTicketRailWide((open) => !open)}
+                aria-pressed={ticketRailWide}
+              >
+                {ticketRailWide ? 'Exit full width' : 'Full width'}
+              </button>
             </div>
+            {checkedKeys.length > 0 ? (
+              <p className="selected-points">
+                Selected {checkedKeys.length} · {formatStoryPoints(selectedPointsTotal)} pts
+              </p>
+            ) : null}
             {actionError ? <p className="form-error">{actionError}</p> : null}
             <label className="ticket-search">
               <span className="visually-hidden">Search tickets</span>
@@ -450,6 +585,7 @@ export function Room({ room, playerId, onRoomUpdate, onLeave }: RoomProps) {
                 spellCheck={false}
               />
             </label>
+            <div className="ticket-rail-scroll">
             {ticketQuery.trim() ? (
               <>
                 {searchBusy ? <p className="field-hint">Searching…</p> : null}
@@ -463,6 +599,8 @@ export function Room({ room, playerId, onRoomUpdate, onLeave }: RoomProps) {
                     <TicketList
                       issues={searchResults || []}
                       selectedKey={selected?.key}
+                      checkedKeys={checkedSet}
+                      onToggleChecked={toggleCheckedKey}
                       onSelect={handleSelectIssue}
                       showAssignee
                     />
@@ -475,79 +613,75 @@ export function Room({ room, playerId, onRoomUpdate, onLeave }: RoomProps) {
                 {planningError ? <p className="form-error">{planningError}</p> : null}
 
                 {planning?.activeSprints?.map((group) => (
-                  <details
+                  <TicketGroupBlock
                     key={`active-${group.id}`}
-                    className="ticket-group"
+                    group={group}
+                    heading={`Active · ${group.name}`}
                     open={openGroups[`active-${group.id}`] ?? true}
-                    onToggle={(e) => {
-                      const el = e.target as HTMLDetailsElement
-                      const open = Boolean(el?.open)
+                    onOpenChange={(open) =>
                       setOpenGroups((prev) => ({
                         ...prev,
                         [`active-${group.id}`]: open,
                       }))
-                    }}
-                  >
-                    <summary>
-                      Active · {group.name}
-                      <span>{group.issues.length}</span>
-                    </summary>
-                    <TicketList
-                      issues={group.issues}
-                      selectedKey={selected?.key}
-                      onSelect={handleSelectIssue}
-                    />
-                  </details>
+                    }
+                    selectedKey={selected?.key}
+                    checkedKeys={checkedSet}
+                    onToggleChecked={toggleCheckedKey}
+                    onToggleGroup={toggleCheckedGroup}
+                    onSelect={handleSelectIssue}
+                    onReorder={(fromKey, toKey) =>
+                      handleReorderIssues(String(group.id), group.issues, fromKey, toKey)
+                    }
+                  />
                 ))}
 
                 {planning?.backlogGroups.map((group) => (
-                  <details
+                  <TicketGroupBlock
                     key={group.id}
-                    className="ticket-group"
+                    group={group}
+                    heading={group.name}
                     open={openGroups[String(group.id)] ?? true}
-                    onToggle={(e) => {
-                      const el = e.target as HTMLDetailsElement
-                      const open = Boolean(el?.open)
+                    onOpenChange={(open) =>
                       setOpenGroups((prev) => ({
                         ...prev,
                         [String(group.id)]: open,
                       }))
-                    }}
-                  >
-                    <summary>
-                      {group.name}
-                      <span>{group.issues.length}</span>
-                    </summary>
-                    <TicketList
-                      issues={group.issues}
-                      selectedKey={selected?.key}
-                      onSelect={handleSelectIssue}
-                    />
-                  </details>
+                    }
+                    selectedKey={selected?.key}
+                    checkedKeys={checkedSet}
+                    onToggleChecked={toggleCheckedKey}
+                    onToggleGroup={toggleCheckedGroup}
+                    onSelect={handleSelectIssue}
+                    onReorder={(fromKey, toKey) =>
+                      handleReorderIssues(String(group.id), group.issues, fromKey, toKey)
+                    }
+                  />
                 ))}
 
                 {planning?.previousSprint ? (
-                  <details
-                    className="ticket-group"
+                  <TicketGroupBlock
+                    group={planning.previousSprint}
+                    heading={`Last sprint · ${planning.previousSprint.name}`}
                     open={prevOpen}
-                    onToggle={(e) => {
-                      const el = e.target as HTMLDetailsElement
-                      setPrevOpen(Boolean(el?.open))
-                    }}
-                  >
-                    <summary>
-                      Last sprint · {planning.previousSprint.name}
-                      <span>{planning.previousSprint.issues.length}</span>
-                    </summary>
-                    <TicketList
-                      issues={planning.previousSprint.issues}
-                      selectedKey={selected?.key}
-                      onSelect={handleSelectIssue}
-                    />
-                  </details>
+                    onOpenChange={setPrevOpen}
+                    selectedKey={selected?.key}
+                    checkedKeys={checkedSet}
+                    onToggleChecked={toggleCheckedKey}
+                    onToggleGroup={toggleCheckedGroup}
+                    onSelect={handleSelectIssue}
+                    onReorder={(fromKey, toKey) =>
+                      handleReorderIssues(
+                        String(planning.previousSprint?.id),
+                        planning.previousSprint?.issues || [],
+                        fromKey,
+                        toKey,
+                      )
+                    }
+                  />
                 ) : null}
               </>
             )}
+            </div>
           </aside>
         ) : null}
 
@@ -613,24 +747,60 @@ export function Room({ room, playerId, onRoomUpdate, onLeave }: RoomProps) {
             })}
           </section>
 
+          {isHost ? (
+            <section className="host-point-box">
+              <label>
+                Story points
+                <input
+                  className="avg-input"
+                  value={hostPoints ?? ''}
+                  onChange={(event) =>
+                    handleHostPointsChange(event.target.value)
+                  }
+                  inputMode="decimal"
+                  pattern="[0-9]*[.]?[0-9]*"
+                  placeholder="—"
+                  aria-label="Story points"
+                />
+              </label>
+              {!sameTitleOpen ? (
+                <button
+                  type="button"
+                  className="cta secondary"
+                  onClick={handleSetStoryPoint}
+                  disabled={
+                    storyPointBusy ||
+                    !selected?.key ||
+                    storyPointsValue == null
+                  }
+                >
+                  {storyPointBusy
+                    ? 'Setting…'
+                    : storyPointsLabel != null
+                      ? `Set story point (${storyPointsLabel})`
+                      : 'Set story point'}
+                </button>
+              ) : sameTitleBusy ? (
+                <p className="field-hint">Finding matching tickets…</p>
+              ) : sameTitleIssues.length > 0 && !sameTitleDialogOpen ? (
+                <button
+                  type="button"
+                  className="cta secondary"
+                  onClick={() => setSameTitleDialogOpen(true)}
+                >
+                  Similar tickets ({sameTitleIssues.length})
+                </button>
+              ) : sameTitleIssues.length === 0 ? (
+                <p className="ticket-empty-mini">No other tickets</p>
+              ) : null}
+            </section>
+          ) : null}
+
           {room.revealed ? (
             <section className="results compact" aria-live="polite">
               <div>
                 <span>Average</span>
-                {isHost && avg != null ? (
-                  <input
-                    className="avg-input"
-                    value={hostPoints ?? ''}
-                    onChange={(event) =>
-                      handleHostPointsChange(event.target.value)
-                    }
-                    inputMode="decimal"
-                    pattern="[0-9]*[.]?[0-9]*"
-                    aria-label="Average story points"
-                  />
-                ) : (
-                  <strong>{avg ?? '—'}</strong>
-                )}
+                <strong>{avg ?? '—'}</strong>
               </div>
             </section>
           ) : null}
@@ -651,46 +821,14 @@ export function Room({ room, playerId, onRoomUpdate, onLeave }: RoomProps) {
                   Reveal cards
                 </button>
               ) : (
-                <>
-                  {!sameTitleOpen ? (
-                    <button
-                      type="button"
-                      className="cta secondary"
-                      onClick={handleSetStoryPoint}
-                      disabled={
-                        storyPointBusy ||
-                        !selected?.key ||
-                        storyPointsValue == null
-                      }
-                    >
-                      {storyPointBusy
-                        ? 'Setting…'
-                        : storyPointsLabel != null
-                          ? `Set story point (${storyPointsLabel})`
-                          : 'Set story point'}
-                    </button>
-                  ) : sameTitleBusy ? (
-                    <p className="field-hint">Finding matching tickets…</p>
-                  ) : sameTitleIssues.length > 0 && !sameTitleDialogOpen ? (
-                    <button
-                      type="button"
-                      className="cta secondary"
-                      onClick={() => setSameTitleDialogOpen(true)}
-                    >
-                      Similar tickets ({sameTitleIssues.length})
-                    </button>
-                  ) : sameTitleIssues.length === 0 ? (
-                    <p className="ticket-empty-mini">No other tickets</p>
-                  ) : null}
-                  <button
-                    type="button"
-                    className="ghost"
-                    onClick={resetRound}
-                    disabled={storyPointBusy}
-                  >
-                    Next round
-                  </button>
-                </>
+                <button
+                  type="button"
+                  className="ghost"
+                  onClick={resetRound}
+                  disabled={storyPointBusy}
+                >
+                  Next round
+                </button>
               )}
             </section>
           ) : (
@@ -863,15 +1001,99 @@ export function Room({ room, playerId, onRoomUpdate, onLeave }: RoomProps) {
   )
 }
 
+function TicketGroupBlock({
+  group,
+  heading,
+  open,
+  onOpenChange,
+  selectedKey,
+  checkedKeys,
+  onToggleChecked,
+  onToggleGroup,
+  onSelect,
+  onReorder,
+}: {
+  group: PlanningGroup
+  heading: string
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  selectedKey?: string
+  checkedKeys: Set<string>
+  onToggleChecked: (key: string) => void
+  onToggleGroup: (keys: string[], selectAll: boolean) => void
+  onSelect: (issue: PlanningIssue) => void
+  onReorder: (fromKey: string, toKey: string) => void
+}) {
+  const keys = group.issues.map((issue) => issue.key)
+  const selectedCount = keys.filter((key) => checkedKeys.has(key)).length
+  const allOn = keys.length > 0 && selectedCount === keys.length
+  const someOn = selectedCount > 0 && !allOn
+  const points = sumStoryPoints(group.issues)
+
+  return (
+    <details
+      className="ticket-group"
+      open={open}
+      onToggle={(e) => {
+        const el = e.target as HTMLDetailsElement
+        onOpenChange(Boolean(el?.open))
+      }}
+    >
+      <summary
+        onClick={(event) => {
+          const target = event.target as HTMLElement
+          if (target.closest('.ticket-group-check')) {
+            event.preventDefault()
+          }
+        }}
+      >
+        <label
+          className="ticket-group-check"
+          onClick={(event) => event.stopPropagation()}
+        >
+          <input
+            type="checkbox"
+            checked={allOn}
+            ref={(el) => {
+              if (el) el.indeterminate = someOn
+            }}
+            onChange={() => onToggleGroup(keys, !allOn)}
+            onClick={(event) => event.stopPropagation()}
+            aria-label={`Select all in ${heading}`}
+          />
+        </label>
+        <span className="ticket-group-title">{heading}</span>
+        <span>
+          {formatStoryPoints(points)} pts · {group.issues.length}
+        </span>
+      </summary>
+      <TicketList
+        issues={group.issues}
+        selectedKey={selectedKey}
+        checkedKeys={checkedKeys}
+        onToggleChecked={onToggleChecked}
+        onSelect={onSelect}
+        onReorder={onReorder}
+      />
+    </details>
+  )
+}
+
 function TicketList({
   issues,
   selectedKey,
+  checkedKeys,
+  onToggleChecked,
   onSelect,
+  onReorder,
   showAssignee = false,
 }: {
   issues: PlanningIssue[]
   selectedKey?: string
+  checkedKeys: Set<string>
+  onToggleChecked: (key: string) => void
   onSelect: (issue: PlanningIssue) => void
+  onReorder?: (fromKey: string, toKey: string) => void
   showAssignee?: boolean
 }) {
   if (issues.length === 0) {
@@ -880,7 +1102,37 @@ function TicketList({
   return (
     <ul className="ticket-list">
       {issues.map((issue) => (
-        <li key={issue.key}>
+        <li
+          key={issue.key}
+          className="ticket-row"
+          draggable={Boolean(onReorder)}
+          onDragStart={(event) => {
+            if (!onReorder) return
+            event.dataTransfer.setData('text/plain', issue.key)
+            event.dataTransfer.effectAllowed = 'move'
+          }}
+          onDragOver={(event) => {
+            if (!onReorder) return
+            event.preventDefault()
+          }}
+          onDrop={(event) => {
+            if (!onReorder) return
+            event.preventDefault()
+            const fromKey = event.dataTransfer.getData('text/plain')
+            if (fromKey) onReorder(fromKey, issue.key)
+          }}
+        >
+          <label
+            className="ticket-check"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <input
+              type="checkbox"
+              checked={checkedKeys.has(issue.key)}
+              onChange={() => onToggleChecked(issue.key)}
+              aria-label={`Select ${issue.key}`}
+            />
+          </label>
           <button
             type="button"
             className={selectedKey === issue.key ? 'active' : ''}
@@ -888,6 +1140,9 @@ function TicketList({
           >
             <span className="ticket-list-keyrow">
               <strong>{issue.key}</strong>
+              <span className="ticket-list-points">
+                {formatStoryPoints(issue.storyPoints)}
+              </span>
               {issue.status ? (
                 <span
                   className={`ticket-list-status cat-${issue.statusCategory || 'default'}`}
@@ -907,4 +1162,32 @@ function TicketList({
       ))}
     </ul>
   )
+}
+
+function formatStoryPoints(value: number | null | undefined) {
+  if (value == null || !Number.isFinite(value)) return '—'
+  if (value === 0.5) return '½'
+  return Number.isInteger(value) ? String(value) : String(value)
+}
+
+function sumStoryPoints(issues: PlanningIssue[]) {
+  return issues.reduce((sum, issue) => {
+    const value = issue.storyPoints
+    return sum + (typeof value === 'number' && Number.isFinite(value) ? value : 0)
+  }, 0)
+}
+
+function moveIssueInList(
+  issues: PlanningIssue[],
+  fromKey: string,
+  toKey: string,
+) {
+  if (fromKey === toKey) return null
+  const fromIdx = issues.findIndex((issue) => issue.key === fromKey)
+  const toIdx = issues.findIndex((issue) => issue.key === toKey)
+  if (fromIdx < 0 || toIdx < 0) return null
+  const next = [...issues]
+  const [item] = next.splice(fromIdx, 1)
+  next.splice(toIdx, 0, item)
+  return next
 }
