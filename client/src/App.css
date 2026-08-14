@@ -1337,6 +1337,15 @@ button.adf-media-link {
   overflow-wrap: anywhere;
 }
 
+.ticket-description a,
+.ticket-comments a,
+.adf-doc a,
+.adf-html a,
+.adf-p a {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
 .adf-html img {
   display: block;
   max-width: min(100%, 720px);
@@ -1445,7 +1454,7 @@ button.adf-media-link {
   border-radius: 1rem;
   background: transparent;
   padding: 0.75rem;
-  overflow: auto;
+  overflow: hidden;
   box-shadow: none;
   color: #14201b;
   opacity: 0.28;
@@ -1472,6 +1481,46 @@ button.adf-media-link {
 
 .ticket-rail {
   left: 0.75rem;
+  transition:
+    opacity 0.22s ease,
+    background 0.22s ease,
+    border-color 0.22s ease,
+    box-shadow 0.22s ease,
+    color 0.22s ease,
+    width 0.28s ease;
+}
+
+.ticket-rail.is-wide {
+  width: calc(100% - 1.5rem);
+  z-index: 6;
+  opacity: 1;
+  background: rgba(26, 11, 46, 0.94);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border-color: rgba(243, 234, 215, 0.28);
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.4);
+  color: var(--cream);
+}
+
+.rail-wide-btn {
+  flex: 0 0 auto;
+  font-size: 0.72rem;
+  padding: 0.25rem 0.5rem;
+}
+
+.selected-points {
+  margin: 0;
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+
+.ticket-rail-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
 }
 
 .vote-rail {
@@ -1616,13 +1665,45 @@ button.adf-media-link {
 .ticket-group summary {
   cursor: pointer;
   list-style: none;
-  display: flex;
-  justify-content: space-between;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
   gap: 0.5rem;
   align-items: center;
   padding: 0.55rem 0.25rem;
   font-size: 0.86rem;
   font-weight: 600;
+}
+
+.ticket-group-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ticket-group-check,
+.ticket-check {
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+}
+
+.ticket-group-check input,
+.ticket-check input {
+  width: 0.95rem;
+  height: 0.95rem;
+  accent-color: #c084fc;
+}
+
+.ticket-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 0.35rem;
+  align-items: start;
+}
+
+.ticket-check {
+  padding-top: 0.7rem;
 }
 
 .ticket-group summary::-webkit-details-marker {
@@ -1662,6 +1743,13 @@ button.adf-media-link {
   justify-content: space-between;
   gap: 0.4rem;
   min-width: 0;
+}
+
+.ticket-list-points {
+  flex: 0 0 auto;
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: var(--gold-bright);
 }
 
 .ticket-list button strong {
@@ -1737,6 +1825,10 @@ button.adf-media-link {
   background: rgba(168, 85, 247, 0.14);
 }
 
+.ticket-rail.is-wide .ticket-list {
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+}
+
 .ticket-empty-mini {
   margin: 0;
   padding: 0.35rem;
@@ -1750,6 +1842,8 @@ button.adf-media-link {
   flex: 1;
   overflow: auto;
   justify-content: flex-start;
+  align-content: flex-start;
+  align-items: flex-start;
   padding: 0.75rem 0.4rem;
   border: 0;
   border-radius: 0;
@@ -1814,8 +1908,29 @@ button.adf-media-link {
   color: var(--gold-bright);
 }
 
+.host-point-box {
+  display: grid;
+  gap: 0.45rem;
+}
+
+.host-point-box label {
+  display: grid;
+  gap: 0.2rem;
+  font-size: 0.72rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  opacity: 0.75;
+}
+
 .avg-input:focus {
   outline: none;
+}
+
+.vote-rail .rail-head,
+.vote-rail .host-point-box,
+.vote-rail .results,
+.vote-rail .controls {
+  flex-shrink: 0;
 }
 
 .vote-rail .controls {
@@ -1826,6 +1941,9 @@ button.adf-media-link {
 .vote-rail .hand {
   justify-content: center;
   gap: 0.4rem;
+  flex: 0 1 auto;
+  max-height: 42%;
+  overflow: auto;
 }
 
 .vote-rail .point-card {
@@ -2079,6 +2197,13 @@ button.adf-media-link {
     left: auto;
   }
 
+  .ticket-rail.is-wide {
+    top: 4.4rem;
+    bottom: 0.75rem;
+    max-height: none;
+    width: calc(100% - 1.5rem);
+  }
+
   .room-shell {
     height: 100dvh;
     max-height: 100dvh;
@@ -2176,7 +2301,7 @@ button.adf-media-link {
   display: flex;
   flex-wrap: wrap;
   justify-content: center;
-  align-content: center;
+  align-content: flex-start;
   gap: 1rem 1.15rem;
   padding: 1.5rem 1rem;
   border-radius: 2rem;

@@ -202,6 +202,28 @@ export async function searchIssues(
   return data
 }
 
+export async function rankIssue(payload: {
+  key: string
+  roomId: string
+  rankBeforeIssue?: string
+  rankAfterIssue?: string
+}) {
+  const res = await apiFetch(
+    `/api/issues/${encodeURIComponent(payload.key)}/rank`,
+    {
+      method: 'PUT',
+      body: JSON.stringify({
+        roomId: payload.roomId,
+        rankBeforeIssue: payload.rankBeforeIssue,
+        rankAfterIssue: payload.rankAfterIssue,
+      }),
+    },
+  )
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(data?.error || 'Failed to rank issue')
+  return data as { ok: boolean; key: string }
+}
+
 export async function setIssueStoryPoints(payload: {
   key: string
   points: number

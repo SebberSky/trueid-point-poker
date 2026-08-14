@@ -71,6 +71,7 @@ const {
   setIssueNeedQa,
   setIssuePlatforms,
   setIssueFixVersions,
+  rankIssue,
   listAllBoards,
   defaultJiraAuth,
   verifyHostJiraAccess,
@@ -607,6 +608,40 @@ app.put(
   } catch (err) {
     console.error('set story points failed', err)
     res.status(500).json({ error: 'Failed to set story points' })
+  }
+})
+
+app.put('/api/issues/:key/rank', requireUser, requireRoomHost, async (req, res) => {
+  const roomId = req.roomId
+  const hostEmail = req.user.email
+
+  const roomHostAuth = getRoomHostAuth(roomId)
+  if (roomHostAuth && roomHostAuth.email !== hostEmail) {
+    res.status(400).json({
+      error: 'Room host API token is not configured for this host',
+    })
+    return
+  }
+
+  const auth = roomHostAuth || resolveJiraAuth(roomId)
+
+  try {
+    const result = await rankIssue(
+      {
+        issueKey: req.params.key,
+        rankBeforeIssue: req.body?.rankBeforeIssue,
+        rankAfterIssue: req.body?.rankAfterIssue,
+      },
+      auth,
+    )
+    if (result.error) {
+      res.status(result.status || 400).json({ error: result.error })
+      return
+    }
+    res.json(result)
+  } catch (err) {
+    console.error('rank issue failed', err)
+    res.status(500).json({ error: 'Failed to rank issue' })
   }
 })
 

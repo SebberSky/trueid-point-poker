@@ -59,6 +59,7 @@ export type PlanningIssue = {
   assignee?: string | null
   url: string
   platforms?: string[]
+  storyPoints?: number | null
 }
 
 export type PlanningGroup = {
