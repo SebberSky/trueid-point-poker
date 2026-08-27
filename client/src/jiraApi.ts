@@ -55,13 +55,17 @@ export type AccessResponse = {
   }>
 }
 
+export type AdminRoomHost = {
+  email: string
+  hasApiToken: boolean
+}
+
 export type AdminRoom = {
   roomId: string
   boardId: number | null
   boardName: string
   projectName: string | null
-  hostEmail: string | null
-  hasApiToken: boolean
+  hosts: AdminRoomHost[]
   members: Array<{
     email: string
     displayName: string
@@ -387,9 +391,15 @@ export async function adminListRooms() {
   }
   const data = await res.json()
   if (!res.ok) throw new Error(data?.error || 'Failed to load rooms')
-  return data as {
-    rooms: AdminRoom[]
-    warning?: string
+  const rooms = Array.isArray(data?.rooms)
+    ? data.rooms.map((room: AdminRoom) => ({
+        ...room,
+        hosts: Array.isArray(room.hosts) ? room.hosts : [],
+      }))
+    : []
+  return {
+    rooms,
+    warning: data?.warning as string | undefined,
   }
 }
 
@@ -443,7 +453,28 @@ export async function adminSetHost(
   if (!res.ok) throw new Error(data?.error || 'Failed to save host')
   return data as {
     roomId: string
-    hostEmail: string
-    hasApiToken: boolean
+    hosts: AdminRoomHost[]
+  }
+}
+
+export async function adminRemoveHost(roomId: string, email: string) {
+  const res = await fetch(
+    appUrl(
+      `/api/${ADMIN_PATH}/rooms/${encodeURIComponent(roomId)}/hosts/${encodeURIComponent(email)}`,
+    ),
+    {
+      method: 'DELETE',
+      headers: adminHeaders(),
+    },
+  )
+  if (res.status === 401) {
+    setAdminToken(null)
+    throw new Error('Admin login required')
+  }
+  const data = await res.json()
+  if (!res.ok) throw new Error(data?.error || 'Failed to remove host')
+  return data as {
+    roomId: string
+    hosts: AdminRoomHost[]
   }
 }

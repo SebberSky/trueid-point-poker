@@ -12,10 +12,11 @@ import {
   getRoomHostPublic,
   listRoomIds,
   listAllRooms,
-  readRoomHostCreds,
+  readRoomHosts,
   readRoomMembers,
   readRoomSession,
-  setRoomHost,
+  removeRoomHost,
+  upsertRoomHost,
   upsertMember,
   writeRoomMembers,
   writeRoomSession,
@@ -79,13 +80,37 @@ const {
 } = await import('./jira.js')
 
 /**
- * Prefer room-host token when configured; otherwise server default (JIRA_*).
+ * Prefer the acting host's token, then any room-host token, else server default.
  * @param {string} [roomId]
+ * @param {string} [preferredEmail]
  * @returns {{ email: string, token: string }}
  */
-function resolveJiraAuth(roomId) {
+function resolveJiraAuth(roomId, preferredEmail) {
+  if (roomId && preferredEmail) {
+    const own = getRoomHostAuth(roomId, preferredEmail)
+    if (own) return own
+  }
   const host = roomId ? getRoomHostAuth(roomId) : null
   if (host) return host
+  return defaultJiraAuth()
+}
+
+/**
+ * @param {import('express').Request} req
+ * @param {import('express').Response} res
+ * @returns {{ email: string, token: string } | null}
+ */
+function actingHostJiraAuth(req, res) {
+  const roomId = req.roomId
+  const hostEmail = req.user.email
+  const own = getRoomHostAuth(roomId, hostEmail)
+  if (own) return own
+  if (getRoomHostAuth(roomId)) {
+    res.status(400).json({
+      error: 'Room host API token is not configured for this host',
+    })
+    return null
+  }
   return defaultJiraAuth()
 }
 
@@ -346,7 +371,7 @@ app.get(
   async (req, res) => {
   try {
     const roomId = req.roomId
-    const auth = resolveJiraAuth(roomId)
+    const auth = resolveJiraAuth(roomId, req.user.email)
     const result = await getBoardPlanningTickets(req.params.boardId, auth)
     if (result.error) {
       res.status(result.status || 400).json({ error: result.error })
@@ -365,7 +390,7 @@ app.get(
   requireApprovedRoomMember,
   async (req, res) => {
   try {
-    const auth = resolveJiraAuth(req.roomId)
+    const auth = resolveJiraAuth(req.roomId, req.user.email)
     const result = await fetchAttachmentBinary(req.params.id, 'content', auth)
     if (result.error) {
       res.status(result.status || 400).json({ error: result.error })
@@ -386,7 +411,7 @@ app.get(
   requireApprovedRoomMember,
   async (req, res) => {
   try {
-    const auth = resolveJiraAuth(req.roomId)
+    const auth = resolveJiraAuth(req.roomId, req.user.email)
     const result = await fetchAttachmentBinary(req.params.id, 'thumbnail', auth)
     if (result.error) {
       const fallback = await fetchAttachmentBinary(req.params.id, 'content', auth)
@@ -414,7 +439,7 @@ app.get(
   requireApprovedRoomMember,
   async (req, res) => {
   try {
-    const auth = resolveJiraAuth(req.roomId)
+    const auth = resolveJiraAuth(req.roomId, req.user.email)
     const result = await searchIssues(String(req.query.q || ''), auth)
     if (result.error) {
       res.status(result.status || 400).json({ error: result.error })
@@ -433,7 +458,7 @@ app.post(
   requireRoomHost,
   async (req, res) => {
     try {
-      const auth = resolveJiraAuth(req.roomId)
+      const auth = resolveJiraAuth(req.roomId, req.user.email)
       const result = await searchIssuesBySummary(
         String(req.body?.summary || ''),
         String(req.body?.excludeKey || req.body?.includeKey || ''),
@@ -458,7 +483,7 @@ app.get(
   async (req, res) => {
   try {
     const roomId = req.roomId
-    const auth = resolveJiraAuth(roomId)
+    const auth = resolveJiraAuth(roomId, req.user.email)
     const result = await getIssueDetails(req.params.key, auth, roomId)
     if (result.error) {
       res.status(result.status || 400).json({ error: result.error })
@@ -479,18 +504,8 @@ app.put(
   requireUser,
   requireRoomHost,
   async (req, res) => {
-  const roomId = req.roomId
-  const hostEmail = req.user.email
-
-  const roomHostAuth = getRoomHostAuth(roomId)
-  if (roomHostAuth && roomHostAuth.email !== hostEmail) {
-    res.status(400).json({
-      error: 'Room host API token is not configured for this host',
-    })
-    return
-  }
-
-  const auth = roomHostAuth || resolveJiraAuth(roomId)
+  const auth = actingHostJiraAuth(req, res)
+  if (!auth) return
 
   try {
     const result = await setIssueNeedQa(req.params.key, req.body?.needQa, auth)
@@ -510,18 +525,8 @@ app.put(
   requireUser,
   requireRoomHost,
   async (req, res) => {
-  const roomId = req.roomId
-  const hostEmail = req.user.email
-
-  const roomHostAuth = getRoomHostAuth(roomId)
-  if (roomHostAuth && roomHostAuth.email !== hostEmail) {
-    res.status(400).json({
-      error: 'Room host API token is not configured for this host',
-    })
-    return
-  }
-
-  const auth = roomHostAuth || resolveJiraAuth(roomId)
+  const auth = actingHostJiraAuth(req, res)
+  if (!auth) return
 
   try {
     const result = await setIssuePlatforms(
@@ -545,18 +550,8 @@ app.put(
   requireUser,
   requireRoomHost,
   async (req, res) => {
-  const roomId = req.roomId
-  const hostEmail = req.user.email
-
-  const roomHostAuth = getRoomHostAuth(roomId)
-  if (roomHostAuth && roomHostAuth.email !== hostEmail) {
-    res.status(400).json({
-      error: 'Room host API token is not configured for this host',
-    })
-    return
-  }
-
-  const auth = roomHostAuth || resolveJiraAuth(roomId)
+  const auth = actingHostJiraAuth(req, res)
+  if (!auth) return
 
   try {
     const result = await setIssueFixVersions(
@@ -580,18 +575,8 @@ app.put(
   requireUser,
   requireRoomHost,
   async (req, res) => {
-  const roomId = req.roomId
-  const hostEmail = req.user.email
-
-  const roomHostAuth = getRoomHostAuth(roomId)
-  if (roomHostAuth && roomHostAuth.email !== hostEmail) {
-    res.status(400).json({
-      error: 'Room host API token is not configured for this host',
-    })
-    return
-  }
-
-  const auth = roomHostAuth || resolveJiraAuth(roomId)
+  const auth = actingHostJiraAuth(req, res)
+  if (!auth) return
 
   try {
     const result = await setIssueStoryPoints(
@@ -612,18 +597,8 @@ app.put(
 })
 
 app.put('/api/issues/:key/rank', requireUser, requireRoomHost, async (req, res) => {
-  const roomId = req.roomId
-  const hostEmail = req.user.email
-
-  const roomHostAuth = getRoomHostAuth(roomId)
-  if (roomHostAuth && roomHostAuth.email !== hostEmail) {
-    res.status(400).json({
-      error: 'Room host API token is not configured for this host',
-    })
-    return
-  }
-
-  const auth = roomHostAuth || resolveJiraAuth(roomId)
+  const auth = actingHostJiraAuth(req, res)
+  if (!auth) return
 
   try {
     const result = await rankIssue(
@@ -809,17 +784,16 @@ app.get(`/api/${ADMIN_PATH}/rooms`, requireAdmin, async (_req, res) => {
 
     const rooms = Array.from(byKey.values())
       .map((room) => {
-        const host = getRoomHostPublic(room.roomId)
+        const { hosts } = getRoomHostPublic(room.roomId)
         return {
           ...room,
-          hostEmail: host.hostEmail,
-          hasApiToken: host.hasApiToken,
+          hosts,
           members: readRoomMembers(room.roomId),
         }
       })
       .sort((a, b) => {
-        const aReady = a.hostEmail && a.hasApiToken ? 0 : 1
-        const bReady = b.hostEmail && b.hasApiToken ? 0 : 1
+        const aReady = a.hosts.some((host) => host.hasApiToken) ? 0 : 1
+        const bReady = b.hosts.some((host) => host.hasApiToken) ? 0 : 1
         if (aReady !== bReady) return aReady - bReady
         return a.roomId.localeCompare(b.roomId)
       })
@@ -830,14 +804,13 @@ app.get(`/api/${ADMIN_PATH}/rooms`, requireAdmin, async (_req, res) => {
     res.json({
       warning: 'Failed to load rooms from Jira; showing local rooms only',
       rooms: listAllRooms().map((room) => {
-        const host = getRoomHostPublic(room.roomId)
+        const { hosts } = getRoomHostPublic(room.roomId)
         return {
           roomId: room.roomId,
           boardId: null,
           boardName: room.roomId,
           projectName: null,
-          hostEmail: host.hostEmail,
-          hasApiToken: host.hasApiToken,
+          hosts,
           members: room.members,
         }
       }),
@@ -857,10 +830,8 @@ app.post(`/api/${ADMIN_PATH}/verify-host`, requireAdmin, async (req, res) => {
       : Number(req.body.boardId)
 
   if (!apiToken && roomId) {
-    const existing = readRoomHostCreds(roomId)
-    if (existing?.apiToken && existing.email === email) {
-      apiToken = existing.apiToken
-    }
+    const existing = readRoomHosts(roomId).find((host) => host.email === email)
+    if (existing?.apiToken) apiToken = existing.apiToken
   }
 
   try {
@@ -906,10 +877,8 @@ app.put(`/api/${ADMIN_PATH}/rooms/:roomId/hosts`, requireAdmin, async (req, res)
     return
   }
   if (!apiToken) {
-    const existing = readRoomHostCreds(roomId)
-    if (existing?.apiToken && existing.email === email) {
-      apiToken = existing.apiToken
-    }
+    const existing = readRoomHosts(roomId).find((host) => host.email === email)
+    if (existing?.apiToken) apiToken = existing.apiToken
   }
   if (!apiToken) {
     res.status(400).json({ error: 'Host API token is required' })
@@ -927,7 +896,7 @@ app.put(`/api/${ADMIN_PATH}/rooms/:roomId/hosts`, requireAdmin, async (req, res)
       res.status(verified.status || 400).json({ error: verified.error })
       return
     }
-    const result = setRoomHost(roomId, email, apiToken)
+    const result = upsertRoomHost(roomId, email, apiToken)
     res.json(result)
   } catch (err) {
     res.status(400).json({
@@ -935,6 +904,33 @@ app.put(`/api/${ADMIN_PATH}/rooms/:roomId/hosts`, requireAdmin, async (req, res)
     })
   }
 })
+
+app.delete(
+  `/api/${ADMIN_PATH}/rooms/:roomId/hosts/:email`,
+  requireAdmin,
+  (req, res) => {
+    const roomId = normalizeRoomId(req.params.roomId)
+    const email = decodeURIComponent(String(req.params.email || ''))
+      .trim()
+      .toLowerCase()
+    if (!roomId) {
+      res.status(400).json({ error: 'Invalid room id' })
+      return
+    }
+    if (!email) {
+      res.status(400).json({ error: 'Host email is required' })
+      return
+    }
+    try {
+      const result = removeRoomHost(roomId, email)
+      res.json(result)
+    } catch (err) {
+      res.status(400).json({
+        error: err instanceof Error ? err.message : 'Failed to remove host',
+      })
+    }
+  },
+)
 
 app.use(express.static(clientDist))
 

@@ -4,26 +4,51 @@ import {
   adminLogin,
   adminLogout,
   adminMe,
+  adminRemoveHost,
   adminSetHost,
   adminVerifyHost,
   getAdminToken,
   isAllowedWorkEmail,
   type AdminRoom,
+  type AdminRoomHost,
 } from './jiraApi'
+
+function hostsOf(room: AdminRoom | null | undefined): AdminRoomHost[] {
+  return room?.hosts || []
+}
+
+function formatRoomHosts(hosts: AdminRoomHost[]) {
+  if (!hosts.length) return ' · no host'
+  return ` · ${hosts
+    .map((host) => `${host.email}${host.hasApiToken ? '' : ' (no token)'}`)
+    .join(', ')}`
+}
 
 function roomMatches(room: AdminRoom, query: string) {
   const q = query.trim().toUpperCase()
   if (!q) return true
-  return (
-    room.roomId.includes(q) ||
-    room.boardName.toUpperCase().includes(q) ||
+  if (room.roomId.includes(q)) return true
+  if (room.boardName.toUpperCase().includes(q)) return true
+  if (
     String(room.projectName || '')
       .toUpperCase()
-      .includes(q) ||
-    String(room.hostEmail || '')
-      .toUpperCase()
       .includes(q)
-  )
+  ) {
+    return true
+  }
+  return hostsOf(room).some((host) => host.email.toUpperCase().includes(q))
+}
+
+function verifyIdleHint(
+  roomId: string,
+  emailNormalized: string,
+  tokenRequired: boolean,
+  apiToken: string,
+) {
+  if (!roomId) return 'เลือกห้องก่อน แล้วกรอก email กับ token'
+  if (!isAllowedWorkEmail(emailNormalized)) return 'กรอก host email ให้ครบ'
+  if (tokenRequired && !apiToken.trim()) return 'กรอก API token เพื่อเริ่มตรวจสอบ'
+  return 'รอตรวจสอบ…'
 }
 
 export function AdminPage() {
@@ -40,7 +65,6 @@ export function AdminPage() {
   const [roomMenuOpen, setRoomMenuOpen] = useState(false)
   const [email, setEmail] = useState('')
   const [apiToken, setApiToken] = useState('')
-  const [hasApiToken, setHasApiToken] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [warning, setWarning] = useState<string | null>(null)
   const [message, setMessage] = useState<string | null>(null)
@@ -54,11 +78,12 @@ export function AdminPage() {
   const verifySeq = useRef(0)
 
   const selected = rooms.find((r) => r.roomId === roomId) || null
+  const selectedHosts = hostsOf(selected)
   const emailNormalized = email.trim().toLowerCase()
-  const tokenRequired =
-    !hasApiToken ||
-    !selected?.hostEmail ||
-    emailNormalized !== selected.hostEmail
+  const editingHost =
+    selectedHosts.find((host) => host.email === emailNormalized) || null
+  const hasSavedToken = Boolean(editingHost?.hasApiToken)
+  const tokenRequired = !hasSavedToken
   const canAttemptVerify =
     Boolean(roomId) &&
     isAllowedWorkEmail(emailNormalized) &&
@@ -164,21 +189,28 @@ export function AdminPage() {
     setWarning(data.warning || null)
     if (roomId) {
       const row = data.rooms.find((r) => r.roomId === roomId)
-      if (row) {
-        setEmail(row.hostEmail || '')
-        setHasApiToken(row.hasApiToken)
-        setRoomQuery(row.roomId)
-      }
+      if (row) setRoomQuery(row.roomId)
     }
   }
 
+  function clearHostForm() {
+    setEmail('')
+    setApiToken('')
+    setMessage(null)
+    setError(null)
+    setVerifyState('idle')
+    setVerifyMessage(null)
+  }
+
   function selectRoom(id: string) {
-    const row = rooms.find((r) => r.roomId === id)
     setRoomId(id)
     setRoomQuery(id)
     setRoomMenuOpen(false)
-    setEmail(row?.hostEmail || '')
-    setHasApiToken(Boolean(row?.hasApiToken))
+    clearHostForm()
+  }
+
+  function selectHost(host: AdminRoomHost) {
+    setEmail(host.email)
     setApiToken('')
     setMessage(null)
     setError(null)
@@ -197,9 +229,7 @@ export function AdminPage() {
     }
     if (roomId && next.trim() !== roomId) {
       setRoomId('')
-      setEmail('')
-      setHasApiToken(false)
-      setApiToken('')
+      clearHostForm()
     }
   }
 
@@ -224,11 +254,7 @@ export function AdminPage() {
     setRooms([])
     setRoomId('')
     setRoomQuery('')
-    setEmail('')
-    setApiToken('')
-    setHasApiToken(false)
-    setMessage(null)
-    setError(null)
+    clearHostForm()
   }
 
   async function handleSave(event: FormEvent) {
@@ -261,11 +287,30 @@ export function AdminPage() {
       })
       setApiToken('')
       await reload()
-      setMessage(`Host saved for ${roomId.trim().toUpperCase()}`)
+      setMessage(`Saved ${hostEmail} for ${roomId.trim().toUpperCase()}`)
       setVerifyState('ok')
       setVerifyMessage('ใช้งานได้')
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Save failed'
+      if (msg.includes('login')) setAuthed(false)
+      setError(msg)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function handleRemove(hostEmail: string) {
+    if (!roomId.trim()) return
+    setBusy(true)
+    setError(null)
+    setMessage(null)
+    try {
+      await adminRemoveHost(roomId.trim().toUpperCase(), hostEmail)
+      if (emailNormalized === hostEmail) clearHostForm()
+      await reload()
+      setMessage(`Removed ${hostEmail}`)
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Remove failed'
       if (msg.includes('login')) setAuthed(false)
       setError(msg)
     } finally {
@@ -357,9 +402,7 @@ export function AdminPage() {
                       <strong>{room.roomId}</strong>
                       <em>
                         {room.boardName}
-                        {room.hostEmail
-                          ? ` · ${room.hostEmail}${room.hasApiToken ? '' : ' (no token)'}`
-                          : ' · no host'}
+                        {formatRoomHosts(hostsOf(room))}
                       </em>
                     </button>
                   </li>
@@ -408,8 +451,43 @@ export function AdminPage() {
                   {selected.boardId ? ` · board ${selected.boardId}` : ''}
                 </p>
               ) : null}
+              {selected ? (
+                <div className="field">
+                  <span>Hosts in this room</span>
+                  <ul className="admin-host-list">
+                    {selectedHosts.length === 0 ? (
+                      <li className="board-empty">No hosts yet</li>
+                    ) : (
+                      selectedHosts.map((host) => (
+                        <li key={host.email}>
+                          <button
+                            type="button"
+                            className={
+                              emailNormalized === host.email ? 'active' : ''
+                            }
+                            onClick={() => selectHost(host)}
+                          >
+                            <strong>{host.email}</strong>
+                            <em>
+                              {host.hasApiToken ? 'token saved' : 'no token'}
+                            </em>
+                          </button>
+                          <button
+                            type="button"
+                            className="ghost admin-host-remove"
+                            disabled={busy}
+                            onClick={() => void handleRemove(host.email)}
+                          >
+                            Remove
+                          </button>
+                        </li>
+                      ))
+                    )}
+                  </ul>
+                </div>
+              ) : null}
               <label className="field">
-                <span>Host email</span>
+                <span>{editingHost ? 'Update host email' : 'Add host email'}</span>
                 <input
                   type="email"
                   value={email}
@@ -422,14 +500,14 @@ export function AdminPage() {
               <label className="field admin-token-field">
                 <span>
                   Jira API token
-                  {hasApiToken ? ' (saved — leave blank to keep)' : ''}
+                  {hasSavedToken ? ' (saved — leave blank to keep)' : ''}
                 </span>
                 <textarea
                   className="admin-token-input"
                   value={apiToken}
                   onChange={(e) => setApiToken(e.target.value)}
                   placeholder={
-                    hasApiToken
+                    hasSavedToken
                       ? 'Token saved — leave blank to keep, or paste a new one'
                       : 'Atlassian API token'
                   }
@@ -476,13 +554,12 @@ export function AdminPage() {
                       ? 'กำลังตรวจสอบกับ Jira…'
                       : verifyState === 'error'
                         ? verifyMessage || 'ตรวจสอบไม่ผ่าน'
-                        : !roomId
-                          ? 'เลือกห้องก่อน แล้วกรอก email กับ token'
-                          : !isAllowedWorkEmail(emailNormalized)
-                            ? 'กรอก host email ให้ครบ'
-                            : tokenRequired && !apiToken.trim()
-                              ? 'กรอก API token เพื่อเริ่มตรวจสอบ'
-                              : 'รอตรวจสอบ…'}
+                        : verifyIdleHint(
+                            roomId,
+                            emailNormalized,
+                            tokenRequired,
+                            apiToken,
+                          )}
                   </span>
                 </div>
               )}
