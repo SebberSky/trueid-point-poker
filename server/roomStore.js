@@ -175,6 +175,11 @@ export function upsertMember(roomId, patch) {
 }
 
 /**
+ * @typedef {{ email: string, tokenCipher?: string, apiToken?: string, updatedAt: string }} RoomHostRecord
+ * @typedef {{ email: string, hasApiToken: boolean }} RoomHostPublic
+ */
+
+/**
  * @param {string} roomId
  */
 function hostCredPath(roomId) {
@@ -186,93 +191,173 @@ function hostCredPath(roomId) {
 }
 
 /**
- * @param {string} roomId
- * @returns {RoomHost|null}
+ * @param {unknown} data
+ * @returns {RoomHostRecord[]}
  */
-export function readRoomHostCreds(roomId) {
-  ensureDir()
-  const path = hostCredPath(roomId)
-  if (!existsSync(path)) return null
-  try {
-    const data = JSON.parse(readFileSync(path, 'utf8'))
-    const email = String(data?.email || '')
+function parseHostRecords(data) {
+  if (Array.isArray(data)) return data
+  if (data && typeof data === 'object' && Array.isArray(data.hosts)) return data.hosts
+  if (data && typeof data === 'object' && data.email) return [data]
+  return []
+}
+
+/**
+ * @param {RoomHostRecord[]} records
+ * @returns {RoomHostRecord[]}
+ */
+function uniqueHostRecords(records) {
+  /** @type {Map<string, RoomHostRecord>} */
+  const byEmail = new Map()
+  for (const rec of records) {
+    const email = String(rec?.email || '')
       .trim()
       .toLowerCase()
-    const updatedAt = String(data?.updatedAt || '')
-    if (!email) return null
-
-    const cipher = String(data?.tokenCipher || '').trim()
-    if (cipher) {
-      const apiToken = decryptSecret(cipher).trim()
-      if (!apiToken) return null
-      return { email, apiToken, updatedAt }
-    }
-
-    const legacy = String(data?.apiToken || '').trim()
-    if (!legacy) return null
-    try {
-      writeHostCredFile(path, {
-        email,
-        tokenCipher: encryptSecret(legacy),
-        updatedAt: updatedAt || new Date().toISOString(),
-      })
-    } catch (err) {
-      console.error('host token migrate-to-keychain failed', roomId, err)
-    }
-    return { email, apiToken: legacy, updatedAt }
-  } catch (err) {
-    console.error('readRoomHostCreds failed', roomId, err)
-    return null
+    if (!email) continue
+    byEmail.set(email, { ...rec, email })
   }
+  return Array.from(byEmail.values())
+}
+
+/**
+ * @param {string} roomId
+ * @param {RoomHostRecord[]} records
+ */
+function persistHostRecords(roomId, records) {
+  ensureDir()
+  const hosts = []
+  for (const rec of uniqueHostRecords(records)) {
+    const plain = String(rec.apiToken || '').trim()
+    let tokenCipher = String(rec.tokenCipher || '').trim()
+    if (plain) tokenCipher = encryptSecret(plain)
+    if (!tokenCipher) continue
+    hosts.push({
+      email: rec.email,
+      tokenCipher,
+      updatedAt: String(rec.updatedAt || new Date().toISOString()),
+    })
+  }
+  writeHostCredFile(hostCredPath(roomId), { hosts })
+}
+
+/**
+ * @param {string} roomId
+ * @returns {RoomHostRecord[]}
+ */
+function loadRawHostRecords(roomId) {
+  ensureDir()
+  const path = hostCredPath(roomId)
+  if (!existsSync(path)) return []
+  try {
+    const data = JSON.parse(readFileSync(path, 'utf8'))
+    const records = parseHostRecords(data)
+    /** @type {RoomHostRecord[]} */
+    const normalized = []
+    let needsRewrite = false
+    for (const rec of records) {
+      const email = String(rec?.email || '')
+        .trim()
+        .toLowerCase()
+      if (!email) continue
+      const tokenCipher = String(rec?.tokenCipher || '').trim()
+      const legacy = String(rec?.apiToken || '').trim()
+      if (!tokenCipher && legacy) needsRewrite = true
+      normalized.push({
+        email,
+        tokenCipher,
+        apiToken: tokenCipher ? '' : legacy,
+        updatedAt: String(rec?.updatedAt || ''),
+      })
+    }
+    const unique = uniqueHostRecords(normalized)
+    if (needsRewrite && unique.length) {
+      try {
+        persistHostRecords(roomId, unique)
+      } catch (err) {
+        console.error('host file migrate failed', roomId, err)
+      }
+    }
+    return unique
+  } catch (err) {
+    console.error('readRoomHosts failed', roomId, err)
+    return []
+  }
+}
+
+/**
+ * @param {string} roomId
+ * @returns {RoomHost[]}
+ */
+export function readRoomHosts(roomId) {
+  /** @type {RoomHost[]} */
+  const hosts = []
+  for (const rec of loadRawHostRecords(roomId)) {
+    const cipher = String(rec.tokenCipher || '').trim()
+    let apiToken = ''
+    if (cipher) {
+      try {
+        apiToken = decryptSecret(cipher).trim()
+      } catch (err) {
+        console.error('host token decrypt failed', roomId, rec.email, err)
+      }
+    } else {
+      apiToken = String(rec.apiToken || '').trim()
+    }
+    if (!apiToken) continue
+    hosts.push({
+      email: rec.email,
+      apiToken,
+      updatedAt: rec.updatedAt,
+    })
+  }
+  return hosts
 }
 
 /**
  * Public host info for admin UI (never includes the raw token).
  * @param {string} roomId
+ * @returns {{ hosts: RoomHostPublic[] }}
  */
 export function getRoomHostPublic(roomId) {
-  ensureDir()
-  const path = hostCredPath(roomId)
-  if (existsSync(path)) {
-    try {
-      const data = JSON.parse(readFileSync(path, 'utf8'))
-      const email = String(data?.email || '')
-        .trim()
-        .toLowerCase()
-      const hasApiToken = Boolean(
-        String(data?.tokenCipher || '').trim() || String(data?.apiToken || '').trim(),
-      )
-      if (email) {
-        return { hostEmail: email, hasApiToken }
-      }
-    } catch {
-      // fall through to membership CSV
+  /** @type {Map<string, RoomHostPublic>} */
+  const byEmail = new Map()
+  for (const rec of loadRawHostRecords(roomId)) {
+    const hasApiToken = Boolean(
+      String(rec.tokenCipher || '').trim() || String(rec.apiToken || '').trim(),
+    )
+    byEmail.set(rec.email, { email: rec.email, hasApiToken })
+  }
+  for (const member of readRoomMembers(roomId)) {
+    if (member.role !== 'host') continue
+    if (!byEmail.has(member.email)) {
+      byEmail.set(member.email, { email: member.email, hasApiToken: false })
     }
   }
-  const host = readRoomMembers(roomId).find((m) => m.role === 'host')
-  return {
-    hostEmail: host?.email || null,
-    hasApiToken: false,
-  }
+  return { hosts: Array.from(byEmail.values()) }
 }
 
 /**
  * @param {string} roomId
+ * @param {string} [email]
  * @returns {{ email: string, token: string } | null}
  */
-export function getRoomHostAuth(roomId) {
-  const creds = readRoomHostCreds(roomId)
-  if (!creds) return null
-  return { email: creds.email, token: creds.apiToken }
+export function getRoomHostAuth(roomId, email) {
+  const hosts = readRoomHosts(roomId)
+  if (!hosts.length) return null
+  const wanted = String(email || '')
+    .trim()
+    .toLowerCase()
+  const match = wanted ? hosts.find((host) => host.email === wanted) : hosts[0]
+  if (!match) return null
+  return { email: match.email, token: match.apiToken }
 }
 
 /**
- * Set the single room host (email + API token required).
+ * Add or update one room host. Other hosts are kept.
  * @param {string} roomId
  * @param {string} hostEmail
  * @param {string} apiToken
  */
-export function setRoomHost(roomId, hostEmail, apiToken) {
+export function upsertRoomHost(roomId, hostEmail, apiToken) {
   const email = String(hostEmail || '')
     .trim()
     .toLowerCase()
@@ -280,13 +365,16 @@ export function setRoomHost(roomId, hostEmail, apiToken) {
   if (!email) throw new Error('Host email is required')
   if (!token) throw new Error('Host API token is required')
 
-  ensureDir()
-  const updatedAt = new Date().toISOString()
-  writeHostCredFile(hostCredPath(roomId), {
+  const records = loadRawHostRecords(roomId)
+  const idx = records.findIndex((rec) => rec.email === email)
+  const nextRecord = {
     email,
-    tokenCipher: encryptSecret(token),
-    updatedAt,
-  })
+    apiToken: token,
+    updatedAt: new Date().toISOString(),
+  }
+  if (idx >= 0) records[idx] = nextRecord
+  else records.push(nextRecord)
+  persistHostRecords(roomId, records)
 
   const members = readRoomMembers(roomId)
   const byEmail = new Map(members.map((m) => [m.email, m]))
@@ -299,23 +387,40 @@ export function setRoomHost(roomId, hostEmail, apiToken) {
     updatedAt: new Date().toISOString(),
   })
 
-  for (const [memberEmail, member] of byEmail) {
-    if (memberEmail !== email && member.role === 'host') {
-      byEmail.set(memberEmail, {
-        ...member,
-        role: 'member',
-        updatedAt: new Date().toISOString(),
-      })
-    }
-  }
-
   const next = Array.from(byEmail.values())
   writeRoomMembers(roomId, next)
   return {
     roomId: String(roomId).toUpperCase(),
     members: next,
-    hostEmail: email,
-    hasApiToken: true,
+    hosts: getRoomHostPublic(roomId).hosts,
+  }
+}
+
+/**
+ * @param {string} roomId
+ * @param {string} hostEmail
+ */
+export function removeRoomHost(roomId, hostEmail) {
+  const email = String(hostEmail || '')
+    .trim()
+    .toLowerCase()
+  if (!email) throw new Error('Host email is required')
+
+  persistHostRecords(
+    roomId,
+    loadRawHostRecords(roomId).filter((rec) => rec.email !== email),
+  )
+
+  const members = readRoomMembers(roomId).map((member) =>
+    member.email === email && member.role === 'host'
+      ? { ...member, role: 'member', updatedAt: new Date().toISOString() }
+      : member,
+  )
+  writeRoomMembers(roomId, members)
+  return {
+    roomId: String(roomId).toUpperCase(),
+    members,
+    hosts: getRoomHostPublic(roomId).hosts,
   }
 }
 

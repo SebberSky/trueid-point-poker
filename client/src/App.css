@@ -429,6 +429,57 @@
   color: rgba(243, 234, 215, 0.58);
 }
 
+.admin-host-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.35rem;
+  max-height: 9.5rem;
+  overflow: auto;
+}
+
+.admin-host-list li {
+  display: flex;
+  gap: 0.35rem;
+  align-items: stretch;
+}
+
+.admin-host-list li > button:first-child {
+  flex: 1 1 auto;
+  min-width: 0;
+  text-align: left;
+  border: 1px solid transparent;
+  border-radius: 0.75rem;
+  background: rgba(243, 234, 215, 0.04);
+  color: var(--cream);
+  padding: 0.45rem 0.65rem;
+  display: grid;
+  gap: 0.1rem;
+}
+
+.admin-host-list li > button:first-child.active {
+  border-color: rgba(168, 85, 247, 0.45);
+  background: rgba(168, 85, 247, 0.14);
+}
+
+.admin-host-list strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.admin-host-list em {
+  font-style: normal;
+  font-size: 0.75rem;
+  color: rgba(243, 234, 215, 0.55);
+}
+
+.admin-host-remove {
+  flex: 0 0 auto;
+  align-self: center;
+}
+
 .admin-room-list em {
   font-style: normal;
   font-size: 0.78rem;
