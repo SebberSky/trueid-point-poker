@@ -372,7 +372,7 @@ export function TicketViewer({
             ))}
           </ul>
         </section>
-      ) : null}
+        ) : null}
     </article>
   )
 }

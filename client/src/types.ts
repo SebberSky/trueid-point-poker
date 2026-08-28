@@ -38,6 +38,27 @@ export type SelectedTicket = {
   url: string
 }
 
+export const DRAW_COLORS = [
+  '#dc2626',
+  '#ea580c',
+  '#ca8a04',
+  '#16a34a',
+  '#2563eb',
+  '#7c3aed',
+  '#0f172a',
+] as const
+
+export const DEFAULT_DRAW_COLOR = DRAW_COLORS[0]
+
+export type DrawPoint = { x: number; y: number }
+
+export type DrawStroke = {
+  id: string
+  ticketKey: string
+  color: string
+  points: DrawPoint[]
+}
+
 export type RoomState = {
   code: string
   boardName?: string
@@ -48,7 +69,12 @@ export type RoomState = {
   players: PublicPlayer[]
   voters?: PublicPlayer[]
   pending?: PendingMember[]
+  strokes?: DrawStroke[]
+  voteDeadline?: number | null
 }
+
+export const TIMER_SECONDS = [30, 60] as const
+export type TimerSeconds = (typeof TIMER_SECONDS)[number]
 
 export type PlanningIssue = {
   key: string
@@ -151,4 +177,49 @@ export function consensusLabel(players: PublicPlayer[]): string | null {
   if (unique.size === 1) return 'Unanimous'
   if (unique.size === 2) return 'Close'
   return 'Spread'
+}
+
+export type VoteTallyRow = {
+  label: string
+  count: number
+}
+
+export function voteTally(players: PublicPlayer[]): VoteTallyRow[] {
+  const counts = new Map<string, number>()
+  for (const player of players) {
+    if (!player.vote) continue
+    counts.set(player.vote, (counts.get(player.vote) || 0) + 1)
+  }
+  const rows: VoteTallyRow[] = []
+  for (const label of POINT_VALUES) {
+    const count = counts.get(label)
+    if (count) rows.push({ label, count })
+  }
+  for (const [label, count] of counts) {
+    if (!(POINT_VALUES as readonly string[]).includes(label)) {
+      rows.push({ label, count })
+    }
+  }
+  return rows
+}
+
+export function countVotesMatching(
+  players: PublicPlayer[],
+  points: number | null,
+  label?: string | null,
+): number {
+  const trimmed = String(label ?? '').trim()
+  if (points == null && !trimmed) return 0
+  let count = 0
+  for (const player of players) {
+    if (!player.vote) continue
+    if (trimmed && player.vote === trimmed) {
+      count += 1
+      continue
+    }
+    if (points == null) continue
+    const votePoints = parseStoryPointsInput(player.vote)
+    if (votePoints != null && votePoints === points) count += 1
+  }
+  return count
 }

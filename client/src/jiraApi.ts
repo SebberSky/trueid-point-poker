@@ -88,16 +88,30 @@ export function atlassianLoginUrl() {
 export async function fetchAuthProviders(): Promise<{
   atlassian: boolean
   apiTokenLogin: boolean
+  bypassLogin: boolean
 }> {
   const res = await apiFetch('/api/auth/providers')
   const data = await res.json().catch(() => ({}))
   if (!res.ok) {
-    return { atlassian: false, apiTokenLogin: false }
+    return { atlassian: false, apiTokenLogin: false, bypassLogin: false }
   }
   return {
     atlassian: Boolean(data?.atlassian),
     apiTokenLogin: Boolean(data?.apiTokenLogin),
+    bypassLogin: Boolean(data?.bypassLogin),
   }
+}
+
+export async function loginWithBypass(email: string, displayName?: string): Promise<void> {
+  const res = await apiFetch('/api/auth/login', {
+    method: 'POST',
+    body: JSON.stringify({
+      email,
+      displayName: displayName?.trim() || undefined,
+    }),
+  })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(data?.error || 'Login failed')
 }
 
 export async function fetchAuthMe(): Promise<{ user: JiraUser } | null> {

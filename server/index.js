@@ -20,6 +20,9 @@ import {
   upsertMember,
   writeRoomMembers,
   writeRoomSession,
+  readRoomDrawings,
+  writeRoomDrawings,
+  clearRoomDrawings,
 } from './roomStore.js'
 import {
   allowLoginAttempt,
@@ -272,15 +275,21 @@ app.get('/api/auth/atlassian/callback', async (req, res) => {
   })
 })
 
+function bypassJiraLoginEnabled() {
+  return process.env.BYPASS_JIRA_LOGIN === 'true'
+}
+
 app.get('/api/auth/providers', (_req, res) => {
   res.json({
     atlassian: atlassianOAuthConfigured(),
     apiTokenLogin: process.env.ALLOW_API_TOKEN_LOGIN === 'true',
+    bypassLogin: bypassJiraLoginEnabled(),
   })
 })
 
 app.post('/api/auth/login', async (req, res) => {
-  if (process.env.ALLOW_API_TOKEN_LOGIN !== 'true') {
+  const bypassLogin = bypassJiraLoginEnabled()
+  if (!bypassLogin && process.env.ALLOW_API_TOKEN_LOGIN !== 'true') {
     res.status(404).json({ error: 'Use Login with Atlassian' })
     return
   }
@@ -292,6 +301,31 @@ app.post('/api/auth/login', async (req, res) => {
   const email = String(req.body?.email || '')
     .trim()
     .toLowerCase()
+  if (!isAllowedEmail(email)) {
+    res.status(400).json({ error: 'Email must be @truedigital.com or @muze.co.th' })
+    return
+  }
+
+  if (bypassLogin) {
+    const displayName =
+      String(req.body?.displayName || '').trim() || email.split('@')[0] || 'Player'
+    const { token, session } = createUserSession({
+      email,
+      displayName,
+      accountId: null,
+    })
+    setSessionCookie(res, sessionCookieOptions(req, token))
+    res.json({
+      user: {
+        email: session.email,
+        emailAddress: session.email,
+        displayName: session.displayName,
+        accountId: session.accountId,
+      },
+    })
+    return
+  }
+
   const apiToken = String(req.body?.apiToken || '').trim()
 
   try {
@@ -976,6 +1010,8 @@ io.use((socket, next) => {
  *   topic: string,
  *   revealed: boolean,
  *   selectedTicket: SelectedTicket | null,
+ *   strokes: Array<{ id: string, ticketKey: string, color: string, points: Array<{ x: number, y: number }> }>,
+ *   voteDeadline: number | null,
  *   players: Map<string, Player>
  * }} Room
  */
@@ -1008,6 +1044,8 @@ function publicRoomState(room) {
     players,
     voters,
     pending: pendingList(room.code),
+    strokes: Array.isArray(room.strokes) ? room.strokes : [],
+    voteDeadline: Number.isFinite(room.voteDeadline) ? room.voteDeadline : null,
   }
 }
 
@@ -1046,6 +1084,76 @@ function emitRoom(code) {
   const state = publicRoomState(room)
   for (const player of room.players.values()) {
     io.to(player.id).emit('room:update', state)
+  }
+}
+
+const DRAW_COLORS = new Set([
+  '#dc2626',
+  '#ea580c',
+  '#ca8a04',
+  '#16a34a',
+  '#2563eb',
+  '#7c3aed',
+  '#0f172a',
+])
+const MAX_DRAW_POINTS = 500
+const MAX_DRAW_STROKES = 200
+
+/**
+ * @param {unknown} raw
+ */
+function sanitizeStrokeId(raw) {
+  const id = String(raw || '').trim()
+  return /^[a-zA-Z0-9-]{8,80}$/.test(id) ? id : null
+}
+
+/**
+ * @param {unknown} raw
+ */
+function sanitizeStroke(raw) {
+  if (!raw || typeof raw !== 'object') return null
+  const data = /** @type {{ id?: unknown, ticketKey?: unknown, color?: unknown, points?: unknown }} */ (
+    raw
+  )
+  const id = sanitizeStrokeId(data.id)
+  const ticketKey = String(data.ticketKey || '')
+    .trim()
+    .toUpperCase()
+  if (!id || !ticketKey) return null
+  const colorRaw = String(data.color || '').trim().toLowerCase()
+  const color = DRAW_COLORS.has(colorRaw) ? colorRaw : '#dc2626'
+  const source = Array.isArray(data.points) ? data.points : []
+  /** @type {Array<{ x: number, y: number }>} */
+  const points = []
+  for (const item of source) {
+    const row = /** @type {{ x?: unknown, y?: unknown }} */ (item || {})
+    const x = Number(row.x)
+    const y = Number(row.y)
+    if (!Number.isFinite(x) || !Number.isFinite(y)) continue
+    points.push({
+      x: Math.min(1, Math.max(0, x)),
+      y: Math.min(1, Math.max(0, y)),
+    })
+    if (points.length >= MAX_DRAW_POINTS) break
+  }
+  if (points.length < 2) return null
+  return { id, ticketKey, color, points }
+}
+
+/**
+ * @param {Room} room
+ * @param {{ id: string, ticketKey: string, color: string, points: Array<{ x: number, y: number }> }} stroke
+ */
+function upsertRoomStroke(room, stroke) {
+  if (!Array.isArray(room.strokes)) room.strokes = []
+  const idx = room.strokes.findIndex((item) => item.id === stroke.id)
+  if (idx >= 0) {
+    room.strokes[idx] = stroke
+    return
+  }
+  room.strokes.push(stroke)
+  if (room.strokes.length > MAX_DRAW_STROKES) {
+    room.strokes.splice(0, room.strokes.length - MAX_DRAW_STROKES)
   }
 }
 
@@ -1093,6 +1201,70 @@ const HOST_OFFLINE_GRACE_MS = 15_000
 /** @type {Map<string, ReturnType<typeof setTimeout>>} */
 const hostOfflineTimers = new Map()
 
+/** @type {Map<string, ReturnType<typeof setTimeout>>} */
+const voteDeadlineTimers = new Map()
+
+/**
+ * @param {string} code
+ */
+function clearVoteDeadlineTimer(code) {
+  const timer = voteDeadlineTimers.get(code)
+  if (timer) {
+    clearTimeout(timer)
+    voteDeadlineTimers.delete(code)
+  }
+}
+
+/**
+ * @param {Room} room
+ */
+function clearVoteDeadline(room) {
+  clearVoteDeadlineTimer(room.code)
+  room.voteDeadline = null
+}
+
+/**
+ * @param {Room} room
+ */
+function expireVoteDeadline(room) {
+  const live = rooms.get(room.code)
+  if (!live || live !== room) return
+  clearVoteDeadlineTimer(live.code)
+  live.voteDeadline = null
+  if (!live.revealed) {
+    live.revealed = true
+    writeRoomSession(live.code, { revealed: true })
+  }
+  emitRoom(live.code)
+}
+
+/**
+ * @param {Room} room
+ * @param {number} seconds
+ */
+function startVoteDeadline(room, seconds) {
+  clearVoteDeadlineTimer(room.code)
+  const ms = seconds === 60 ? 60_000 : 30_000
+  room.voteDeadline = Date.now() + ms
+  const delay = Math.max(0, room.voteDeadline - Date.now())
+  const timer = setTimeout(() => {
+    voteDeadlineTimers.delete(room.code)
+    expireVoteDeadline(room)
+  }, delay)
+  voteDeadlineTimers.set(room.code, timer)
+}
+
+/**
+ * @param {Room} room
+ */
+function votingLocked(room) {
+  if (room.revealed) return true
+  if (Number.isFinite(room.voteDeadline) && Date.now() >= room.voteDeadline) {
+    return true
+  }
+  return false
+}
+
 /**
  * @param {Room} room
  */
@@ -1120,6 +1292,7 @@ function clearHostOfflineTimer(roomId) {
  */
 function closeRoom(roomId, reason) {
   clearHostOfflineTimer(roomId)
+  clearVoteDeadlineTimer(roomId)
   const room = rooms.get(roomId)
   if (!room) return
 
@@ -1132,6 +1305,7 @@ function closeRoom(roomId, reason) {
     }
   }
   writeRoomSession(roomId, { revealed: false })
+  clearRoomDrawings(roomId)
   rooms.delete(roomId)
 }
 
@@ -1261,6 +1435,10 @@ io.on('connection', (socket) => {
         topic: saved.topic || '',
         revealed: false,
         selectedTicket: saved.selectedTicket || null,
+        strokes: readRoomDrawings(roomId)
+          .map((item) => sanitizeStroke(item))
+          .filter(Boolean),
+        voteDeadline: null,
         players: new Map(),
       }
       if (saved.revealed) writeRoomSession(roomId, { revealed: false })
@@ -1270,6 +1448,11 @@ io.on('connection', (socket) => {
         room.boardName = boardName.trim()
       }
       if (Number.isFinite(parsedBoardId)) room.boardId = parsedBoardId
+      if (!Array.isArray(room.strokes)) {
+        room.strokes = readRoomDrawings(roomId)
+          .map((item) => sanitizeStroke(item))
+          .filter(Boolean)
+      }
     }
 
     room.players.set(socket.id, {
@@ -1324,6 +1507,7 @@ io.on('connection', (socket) => {
     for (const player of room.players.values()) {
       if (!player.isHost) player.vote = null
     }
+    clearVoteDeadline(room)
     writeRoomSession(code, {
       selectedTicket: room.selectedTicket,
       topic: room.topic,
@@ -1342,11 +1526,35 @@ io.on('connection', (socket) => {
     emitRoom(code)
   })
 
+  socket.on('draw:stroke', (payload) => {
+    const code = socket.data.roomCode
+    const room = code ? rooms.get(code) : null
+    if (!room || !requireHost(room, socket)) return
+    const stroke = sanitizeStroke(payload?.stroke || payload)
+    if (!stroke) return
+    upsertRoomStroke(room, stroke)
+    writeRoomDrawings(code, room.strokes)
+    emitRoom(code)
+  })
+
+  socket.on('draw:remove', (payload) => {
+    const code = socket.data.roomCode
+    const room = code ? rooms.get(code) : null
+    if (!room || !requireHost(room, socket)) return
+    const id = sanitizeStrokeId(payload?.id)
+    if (!id || !Array.isArray(room.strokes)) return
+    const next = room.strokes.filter((item) => item.id !== id)
+    if (next.length === room.strokes.length) return
+    room.strokes = next
+    writeRoomDrawings(code, room.strokes)
+    emitRoom(code)
+  })
+
   socket.on('vote:cast', ({ value }, callback) => {
     const code = socket.data.roomCode
     const room = code ? rooms.get(code) : null
     const player = room ? playerForSocket(room, socket) : null
-    if (!room || !player || player.isHost || room.revealed) {
+    if (!room || !player || player.isHost || votingLocked(room)) {
       callback?.({ error: 'Cannot vote now' })
       return
     }
@@ -1364,7 +1572,7 @@ io.on('connection', (socket) => {
     const code = socket.data.roomCode
     const room = code ? rooms.get(code) : null
     const player = room ? playerForSocket(room, socket) : null
-    if (!room || !player || player.isHost || room.revealed) {
+    if (!room || !player || player.isHost || votingLocked(room)) {
       callback?.({ error: 'Cannot clear vote now' })
       return
     }
@@ -1373,10 +1581,36 @@ io.on('connection', (socket) => {
     callback?.({ ok: true })
   })
 
+  socket.on('vote:timer-start', ({ seconds }, callback) => {
+    const code = socket.data.roomCode
+    const room = code ? rooms.get(code) : null
+    if (!room || !requireHost(room, socket)) {
+      callback?.({ error: 'Hosts only' })
+      return
+    }
+    if (room.revealed) {
+      callback?.({ error: 'Round already revealed' })
+      return
+    }
+    const duration = Number(seconds)
+    if (duration !== 30 && duration !== 60) {
+      callback?.({ error: 'Timer must be 30 or 60 seconds' })
+      return
+    }
+    if (Number.isFinite(room.voteDeadline) && Date.now() < room.voteDeadline) {
+      callback?.({ error: 'Timer already running' })
+      return
+    }
+    startVoteDeadline(room, duration)
+    emitRoom(code)
+    callback?.({ ok: true, voteDeadline: room.voteDeadline })
+  })
+
   socket.on('round:reveal', () => {
     const code = socket.data.roomCode
     const room = code ? rooms.get(code) : null
     if (!room || !requireHost(room, socket)) return
+    clearVoteDeadline(room)
     room.revealed = true
     writeRoomSession(code, { revealed: true })
     emitRoom(code)
@@ -1390,6 +1624,7 @@ io.on('connection', (socket) => {
     for (const player of room.players.values()) {
       if (!player.isHost) player.vote = null
     }
+    clearVoteDeadline(room)
     writeRoomSession(code, { revealed: false })
     emitRoom(code)
   })

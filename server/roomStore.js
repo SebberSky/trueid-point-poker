@@ -1,4 +1,4 @@
-import { mkdirSync, existsSync, readFileSync, writeFileSync, readdirSync, chmodSync } from 'fs'
+import { mkdirSync, existsSync, readFileSync, writeFileSync, readdirSync, chmodSync, unlinkSync } from 'fs'
 import { join, dirname } from 'path'
 import { fileURLToPath } from 'url'
 import { decryptSecret, encryptSecret } from './secretStore.js'
@@ -505,4 +505,57 @@ export function writeRoomSession(roomId, patch) {
   }
   writeFileSync(sessionPath(roomId), JSON.stringify(next, null, 2), 'utf8')
   return next
+}
+
+/**
+ * @param {string} roomId
+ */
+function drawPath(roomId) {
+  const safe = String(roomId || '')
+    .toUpperCase()
+    .replace(/[^A-Z0-9_-]/g, '')
+  if (!safe) throw new Error('Invalid room id')
+  return join(DATA_DIR, `${safe}.draw.json`)
+}
+
+/**
+ * @param {string} roomId
+ * @returns {Array<{ id: string, ticketKey: string, color: string, points: Array<{ x: number, y: number }> }>}
+ */
+export function readRoomDrawings(roomId) {
+  ensureDir()
+  const path = drawPath(roomId)
+  if (!existsSync(path)) return []
+  try {
+    const data = JSON.parse(readFileSync(path, 'utf8'))
+    return Array.isArray(data?.strokes) ? data.strokes : []
+  } catch {
+    return []
+  }
+}
+
+/**
+ * @param {string} roomId
+ * @param {unknown} strokes
+ */
+export function writeRoomDrawings(roomId, strokes) {
+  ensureDir()
+  writeFileSync(
+    drawPath(roomId),
+    JSON.stringify({ strokes: Array.isArray(strokes) ? strokes : [] }),
+    'utf8',
+  )
+}
+
+/**
+ * @param {string} roomId
+ */
+export function clearRoomDrawings(roomId) {
+  const path = drawPath(roomId)
+  if (!existsSync(path)) return
+  try {
+    unlinkSync(path)
+  } catch {
+    writeRoomDrawings(roomId, [])
+  }
 }
