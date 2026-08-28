@@ -1,5 +1,5 @@
 import { io, type Socket } from 'socket.io-client'
-import type { RoomState } from './types'
+import type { DrawStroke, RoomState } from './types'
 
 const SERVER_URL = import.meta.env.VITE_SERVER_URL as string | undefined
 
@@ -148,10 +148,39 @@ export function revealRound() {
   void ensureSocketConnected().then((s) => s.emit('round:reveal'))
 }
 
+export function startVoteTimer(seconds: number) {
+  return ensureSocketConnected().then(
+    (s) =>
+      new Promise<{ ok?: boolean; error?: string; voteDeadline?: number }>(
+        (resolve) => {
+          s.emit(
+            'vote:timer-start',
+            { seconds },
+            (result: {
+              ok?: boolean
+              error?: string
+              voteDeadline?: number
+            }) => {
+              resolve(result || { ok: true })
+            },
+          )
+        },
+      ),
+  )
+}
+
 export function resetRound() {
   void ensureSocketConnected().then((s) => s.emit('round:reset'))
 }
 
 export function leaveRoomSocket() {
   getSocket().emit('room:leave')
+}
+
+export function emitDrawStroke(stroke: DrawStroke) {
+  void ensureSocketConnected().then((s) => s.emit('draw:stroke', { stroke }))
+}
+
+export function emitDrawRemove(id: string) {
+  void ensureSocketConnected().then((s) => s.emit('draw:remove', { id }))
 }

@@ -6,6 +6,7 @@ import {
   resetRound,
   revealRound,
   selectTicket,
+  startVoteTimer,
 } from './socket'
 import {
   approveRoomMember,
@@ -17,17 +18,22 @@ import {
   rankIssue,
 } from './jiraApi'
 import { TicketViewer } from './TicketViewer'
+import { TicketDrawLayer } from './TicketDrawLayer'
 import { CardArt, CardBackArt, cardTheme } from './CardArt'
 import {
   POINT_VALUES,
+  TIMER_SECONDS,
   averageVote,
+  countVotesMatching,
   parseStoryPointsInput,
+  voteTally,
   voterList,
   type PendingMember,
   type PlanningData,
   type PlanningGroup,
   type PlanningIssue,
   type RoomState,
+  type TimerSeconds,
 } from './types'
 
 type RoomProps = {
@@ -35,6 +41,13 @@ type RoomProps = {
   playerId: string
   onRoomUpdate: (room: RoomState) => void
   onLeave: () => void
+}
+
+function formatCountdown(ms: number) {
+  const total = Math.max(0, Math.ceil(ms / 1000))
+  const minutes = Math.floor(total / 60)
+  const seconds = total % 60
+  return `${minutes}:${String(seconds).padStart(2, '0')}`
 }
 
 export function Room({ room, playerId, onRoomUpdate, onLeave }: RoomProps) {
@@ -64,6 +77,8 @@ export function Room({ room, playerId, onRoomUpdate, onLeave }: RoomProps) {
   const [applyPoints, setApplyPoints] = useState('')
   const [checkedKeys, setCheckedKeys] = useState<string[]>([])
   const [ticketRailWide, setTicketRailWide] = useState(false)
+  const [timerSeconds, setTimerSeconds] = useState<TimerSeconds>(30)
+  const [nowMs, setNowMs] = useState(() => Date.now())
   const wasRevealedRef = useRef(false)
 
   const me = room.players.find((player) => player.id === playerId)
@@ -74,6 +89,27 @@ export function Room({ room, playerId, onRoomUpdate, onLeave }: RoomProps) {
   const avg = useMemo(() => averageVote(voters), [voters])
   const storyPointsLabel = isHost ? hostPoints : avg
   const storyPointsValue = parseStoryPointsInput(storyPointsLabel)
+  const tally = useMemo(
+    () => (room.revealed ? voteTally(voters) : []),
+    [room.revealed, voters],
+  )
+  const tallyMax = Math.max(0, ...tally.map((row) => row.count))
+  const matchingVoteCount = useMemo(
+    () => countVotesMatching(voters, storyPointsValue, storyPointsLabel),
+    [voters, storyPointsValue, storyPointsLabel],
+  )
+  const remainingMs =
+    room.voteDeadline && !room.revealed
+      ? Math.max(0, room.voteDeadline - nowMs)
+      : null
+  const votingClosed = room.revealed || remainingMs === 0
+
+  useEffect(() => {
+    if (!room.voteDeadline || room.revealed) return
+    setNowMs(Date.now())
+    const id = window.setInterval(() => setNowMs(Date.now()), 250)
+    return () => window.clearInterval(id)
+  }, [room.voteDeadline, room.revealed])
 
   function togglePanels() {
     const next = !panelsOpen
@@ -219,7 +255,7 @@ export function Room({ room, playerId, onRoomUpdate, onLeave }: RoomProps) {
   }, [isHost, ticketQuery, room.code])
 
   function handleVote(value: string) {
-    if (isHost || room.revealed) return
+    if (isHost || votingClosed) return
     if (localVote === value) {
       setLocalVote(null)
       void clearVote()
@@ -227,6 +263,11 @@ export function Room({ room, playerId, onRoomUpdate, onLeave }: RoomProps) {
     }
     setLocalVote(value)
     void castVote(value)
+  }
+
+  function handleStartTimer() {
+    if (!isHost || room.revealed || remainingMs != null) return
+    void startVoteTimer(timerSeconds)
   }
 
   async function handleApprove(email: string) {
@@ -470,6 +511,11 @@ export function Room({ room, playerId, onRoomUpdate, onLeave }: RoomProps) {
       <header className="table-top">
         <div className="table-brand">
           <span className="brand-mark">TrueID Point Poker</span>
+          {isHost && pending.length > 0 ? (
+            <span className="pending-head-flag">
+              Approve {pending.length}
+            </span>
+          ) : null}
           <button type="button" className="ghost" onClick={onLeave}>
             Leave
           </button>
@@ -505,8 +551,12 @@ export function Room({ room, playerId, onRoomUpdate, onLeave }: RoomProps) {
       </header>
 
       {isHost && pending.length > 0 ? (
-        <section className="pending-panel">
-          <h2>Waiting for approval</h2>
+        <section className="pending-panel" aria-label="People waiting for approval">
+          <h2>
+            {pending.length === 1
+              ? '1 person waiting — Approve'
+              : `${pending.length} people waiting — Approve`}
+          </h2>
           {actionError ? <p className="form-error">{actionError}</p> : null}
           <ul>
             {pending.map((person) => (
@@ -516,10 +566,18 @@ export function Room({ room, playerId, onRoomUpdate, onLeave }: RoomProps) {
                   <em>{person.email}</em>
                 </span>
                 <span className="pending-actions">
-                  <button type="button" className="ghost" onClick={() => handleApprove(person.email)}>
+                  <button
+                    type="button"
+                    className="cta"
+                    onClick={() => handleApprove(person.email)}
+                  >
                     Approve
                   </button>
-                  <button type="button" className="ghost" onClick={() => handleDeny(person.email)}>
+                  <button
+                    type="button"
+                    className="pending-deny"
+                    onClick={() => handleDeny(person.email)}
+                  >
                     Deny
                   </button>
                 </span>
@@ -533,15 +591,21 @@ export function Room({ room, playerId, onRoomUpdate, onLeave }: RoomProps) {
         <section className="ticket-stage">
           {selected ? (
             <div className="ticket-frame-wrap">
-              <TicketViewer
-                key={selected.key}
-                issueKey={selected.key}
-                roomId={room.code}
-                canEdit={isHost}
-                fallbackSummary={selected.summary}
-                fallbackUrl={selected.url}
-                refreshKey={ticketRefreshKey}
-              />
+              <TicketDrawLayer
+                ticketKey={selected.key}
+                canDraw={isHost}
+                strokes={room.strokes}
+              >
+                <TicketViewer
+                  key={selected.key}
+                  issueKey={selected.key}
+                  roomId={room.code}
+                  canEdit={isHost}
+                  fallbackSummary={selected.summary}
+                  fallbackUrl={selected.url}
+                  refreshKey={ticketRefreshKey}
+                />
+              </TicketDrawLayer>
             </div>
           ) : (
             <div className="ticket-empty">
@@ -702,6 +766,39 @@ export function Room({ room, playerId, onRoomUpdate, onLeave }: RoomProps) {
                 {votedCount}/{voters.length} voted
               </div>
             </div>
+            {remainingMs != null || (isHost && !room.revealed) ? (
+              <section className="vote-timer">
+                {remainingMs != null ? (
+                  <p className="timer-clock" aria-live="polite">
+                    {formatCountdown(remainingMs)}
+                  </p>
+                ) : null}
+                {isHost && !room.revealed && remainingMs == null ? (
+                  <>
+                    <div className="timer-options">
+                      {TIMER_SECONDS.map((value) => (
+                        <button
+                          key={value}
+                          type="button"
+                          className={timerSeconds === value ? 'active' : ''}
+                          aria-pressed={timerSeconds === value}
+                          onClick={() => setTimerSeconds(value)}
+                        >
+                          {value === 60 ? '1 min' : '30 sec'}
+                        </button>
+                      ))}
+                    </div>
+                    <button
+                      type="button"
+                      className="ghost"
+                      onClick={handleStartTimer}
+                    >
+                      Start timer
+                    </button>
+                  </>
+                ) : null}
+              </section>
+            ) : null}
 
           <section className="players compact" aria-label="Voters">
             {voters.map((player, index) => {
@@ -763,6 +860,14 @@ export function Room({ room, playerId, onRoomUpdate, onLeave }: RoomProps) {
                   aria-label="Story points"
                 />
               </label>
+              {room.revealed &&
+              hostPoints != null &&
+              hostPoints !== '' &&
+              votedCount > 0 ? (
+                <p className="point-match-count">
+                  {matchingVoteCount} of {votedCount} voted this
+                </p>
+              ) : null}
               {!sameTitleOpen ? (
                 <button
                   type="button"
@@ -802,6 +907,36 @@ export function Room({ room, playerId, onRoomUpdate, onLeave }: RoomProps) {
                 <span>Average</span>
                 <strong>{avg ?? '—'}</strong>
               </div>
+              {tally.length > 0 ? (
+                <ul className="vote-tally" aria-label="Votes by point">
+                  {tally.map((row) => {
+                    const rowPoints = parseStoryPointsInput(row.label)
+                    const isMatch =
+                      storyPointsValue != null &&
+                      rowPoints != null &&
+                      rowPoints === storyPointsValue
+                    const width =
+                      tallyMax > 0 ? (row.count / tallyMax) * 100 : 0
+                    return (
+                      <li
+                        key={row.label}
+                        className={isMatch ? 'is-match' : undefined}
+                      >
+                        <span className="vote-tally-label">{row.label}</span>
+                        <span className="vote-tally-bar-track">
+                          <span
+                            className="vote-tally-bar"
+                            style={{ width: `${width}%` }}
+                          />
+                        </span>
+                        <span className="vote-tally-count">
+                          {row.count} {row.count === 1 ? 'person' : 'people'}
+                        </span>
+                      </li>
+                    )
+                  })}
+                </ul>
+              ) : null}
             </section>
           ) : null}
 
@@ -816,7 +951,7 @@ export function Room({ room, playerId, onRoomUpdate, onLeave }: RoomProps) {
                   type="button"
                   className="cta"
                   onClick={revealRound}
-                  disabled={votedCount === 0}
+                  disabled={votedCount === 0 && remainingMs == null}
                 >
                   Reveal cards
                 </button>
@@ -841,7 +976,7 @@ export function Room({ room, playerId, onRoomUpdate, onLeave }: RoomProps) {
                     type="button"
                     className={`point-card ${localVote === value ? 'selected' : ''}`}
                     style={{ background: theme.bg, color: theme.ink }}
-                    disabled={room.revealed}
+                    disabled={votingClosed}
                     onClick={() => handleVote(value)}
                     aria-label={`Vote ${value}`}
                   >

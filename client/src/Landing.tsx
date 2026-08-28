@@ -1,9 +1,11 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
 import {
   atlassianLoginUrl,
   fetchAuthMe,
   fetchAuthProviders,
   fetchBoardsForSession,
+  isAllowedWorkEmail,
+  loginWithBypass,
   requestRoomAccess,
   type BoardsResponse,
   type JiraBoard,
@@ -69,6 +71,7 @@ export function Landing({
   const [lookupBusy, setLookupBusy] = useState(false)
   const [lookupError, setLookupError] = useState<string | null>(() => readAuthErrorFromUrl())
   const [oauthReady, setOauthReady] = useState<boolean | null>(null)
+  const [bypassLogin, setBypassLogin] = useState(false)
   const [result, setResult] = useState<BoardsResponse | null>(null)
   const [boardQuery, setBoardQuery] = useState('')
   const [editingName, setEditingName] = useState(false)
@@ -131,8 +134,14 @@ export function Landing({
 
   useEffect(() => {
     void fetchAuthProviders()
-      .then((providers) => setOauthReady(providers.atlassian))
-      .catch(() => setOauthReady(false))
+      .then((providers) => {
+        setOauthReady(providers.atlassian)
+        setBypassLogin(providers.bypassLogin)
+      })
+      .catch(() => {
+        setOauthReady(false)
+        setBypassLogin(false)
+      })
   }, [])
 
   useEffect(() => {
@@ -150,6 +159,27 @@ export function Landing({
       }
     })()
   }, [pendingRoom])
+
+  async function handleBypassLogin(event: FormEvent) {
+    event.preventDefault()
+    const nextEmail = email.trim().toLowerCase()
+    if (!isAllowedWorkEmail(nextEmail)) {
+      setLookupError('Use @truedigital.com or @muze.co.th')
+      return
+    }
+    setLookupBusy(true)
+    setLookupError(null)
+    onClearError()
+    try {
+      await loginWithBypass(nextEmail)
+      await loadBoardsForSession()
+    } catch (err) {
+      setResult(null)
+      setLookupError(err instanceof Error ? err.message : 'Login failed')
+    } finally {
+      setLookupBusy(false)
+    }
+  }
 
   function startEditName() {
     setNameDraft(isCustomNickname ? nickname : '')
@@ -375,34 +405,58 @@ export function Landing({
       <div className="felt-glow" aria-hidden />
       <div className="landing-inner">
         <p className="brand">TrueID Point Poker</p>
-        <h1>Sign in with Atlassian</h1>
+        <h1>{bypassLogin ? 'Continue' : 'Sign in with Atlassian'}</h1>
         <p className="lede">
-          Continue with your TrueDigital / Muze Atlassian account. Works for hosts and players.
+          {bypassLogin
+            ? 'Enter your TrueDigital / Muze work email. Atlassian login is skipped on this server.'
+            : 'Continue with your TrueDigital / Muze Atlassian account. Works for hosts and players.'}
         </p>
 
         <div className="entry-form">
           {error || lookupError ? (
             <p className="form-error">{error || lookupError}</p>
           ) : null}
-          {oauthReady === false ? (
-            <p className="form-error">
-              Atlassian login is not configured on the server yet. Ask an admin to set
-              ATLASSIAN_CLIENT_ID / SECRET / REDIRECT_URI.
-            </p>
-          ) : null}
+          {bypassLogin ? (
+            <form className="bypass-login" onSubmit={handleBypassLogin}>
+              <label className="field">
+                <span>Work email</span>
+                <input
+                  autoComplete="email"
+                  autoFocus
+                  inputMode="email"
+                  placeholder="name@truedigital.com"
+                  type="email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                />
+              </label>
+              <button className="cta full" disabled={lookupBusy} type="submit">
+                {lookupBusy ? 'Signing in…' : 'Continue'}
+              </button>
+            </form>
+          ) : (
+            <>
+              {oauthReady === false ? (
+                <p className="form-error">
+                  Atlassian login is not configured on the server yet. Ask an admin to set
+                  ATLASSIAN_CLIENT_ID / SECRET / REDIRECT_URI.
+                </p>
+              ) : null}
 
-          <a
-            className="cta atlassian-login"
-            href={atlassianLoginUrl()}
-            aria-disabled={oauthReady === false || lookupBusy}
-            onClick={(event) => {
-              if (oauthReady === false || lookupBusy) {
-                event.preventDefault()
-              }
-            }}
-          >
-            {lookupBusy ? 'Checking session…' : 'Continue with Atlassian'}
-          </a>
+              <a
+                className="cta atlassian-login"
+                href={atlassianLoginUrl()}
+                aria-disabled={oauthReady === false || lookupBusy}
+                onClick={(event) => {
+                  if (oauthReady === false || lookupBusy) {
+                    event.preventDefault()
+                  }
+                }}
+              >
+                {lookupBusy ? 'Checking session…' : 'Continue with Atlassian'}
+              </a>
+            </>
+          )}
         </div>
       </div>
     </div>
