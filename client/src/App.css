@@ -2453,6 +2453,114 @@ button.adf-media-link {
     max-height: 100dvh;
     overflow: hidden;
   }
+
+  .vote-rail {
+    gap: 0.35rem;
+    padding: 0.45rem 0.5rem;
+  }
+
+  .vote-rail .vote-timer {
+    gap: 0.25rem;
+  }
+
+  .vote-rail .timer-clock {
+    font-size: 1.15rem;
+  }
+
+  .vote-rail .timer-options button,
+  .vote-rail .ghost,
+  .vote-rail .cta {
+    padding: 0.55rem 0.75rem;
+  }
+
+  .vote-rail .host-point-box {
+    gap: 0.28rem;
+  }
+
+  .vote-rail .avg-input {
+    font-size: 1.25rem;
+  }
+
+  .vote-rail .players.compact {
+    flex: 0 1 auto;
+    max-height: 7.5rem;
+    padding: 0.15rem 0.1rem;
+    gap: 0.35rem 0.4rem;
+  }
+
+  .vote-rail .seat {
+    width: 64px;
+  }
+
+  .vote-rail .card-face {
+    height: 82px;
+    border-radius: 0.65rem;
+  }
+
+  .vote-rail .card-face.illustrated {
+    padding: 0.2rem 0.15rem 0.25rem;
+  }
+
+  .vote-rail .card-value,
+  .vote-rail .card-face.illustrated .card-value {
+    font-size: 1.2rem;
+  }
+
+  .vote-rail .card-empty {
+    font-size: 1.15rem;
+  }
+
+  .vote-rail .seat-name {
+    margin-top: 0.25rem;
+    font-size: 0.68rem;
+  }
+
+  .vote-rail .results {
+    flex-shrink: 1;
+    min-height: 0;
+    overflow: auto;
+  }
+
+  .vote-rail .hand {
+    min-height: 0;
+    max-height: none;
+    overflow: auto;
+    gap: 0.3rem;
+    padding-top: 0.4rem;
+    padding-bottom: 0.1rem;
+  }
+
+  .vote-rail .point-card {
+    width: 44px;
+    height: 70px;
+    border-radius: 0.5rem;
+    padding: 0.1rem 0.08rem 0.14rem;
+  }
+
+  .vote-rail .point-card-label {
+    font-size: 1.05rem;
+  }
+
+  .vote-rail .point-card:hover:not(:disabled) {
+    transform: translateY(-4px);
+  }
+
+  .vote-rail .point-card.selected {
+    transform: translateY(-4px) scale(1.04);
+  }
+
+  .vote-rail .point-card.selected .point-card-label {
+    font-size: 1.12rem;
+  }
+
+  .vote-rail .results.compact strong {
+    font-size: 1.2rem;
+  }
+
+  .vote-rail .vote-tally {
+    gap: 0.25rem;
+    padding: 0.35rem 0.45rem;
+  }
 }
 
 .table-top {
